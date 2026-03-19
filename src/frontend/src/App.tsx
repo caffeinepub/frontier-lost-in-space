@@ -26,6 +26,14 @@ export default function App() {
     if (initRef.current) return;
     initRef.current = true;
     initIntroGating();
+    // Fix 3: Safety fallback — if after 500ms intro state is stuck
+    // (neither playing nor complete), bypass to game
+    setTimeout(() => {
+      const state = useIntroStore.getState();
+      if (!state.introPlaying && !state.introComplete) {
+        state.skipIntro();
+      }
+    }, 500);
   }, [initIntroGating]);
 
   return (

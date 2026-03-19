@@ -41,7 +41,8 @@ export default function CinematicIntro() {
   const completeIntro = useIntroStore((s) => s.completeIntro);
 
   const [elapsed, setElapsed] = useState(0);
-  const [showSkip, setShowSkip] = useState(false);
+  // Fix 4: Show skip button immediately
+  const [showSkip] = useState(true);
   const [fadingOut, setFadingOut] = useState(false);
   const [activeDialogue, setActiveDialogue] = useState<string | null>(null);
   const [visibleHudLines, setVisibleHudLines] = useState<Set<string>>(
@@ -91,10 +92,8 @@ export default function CinematicIntro() {
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
-    const skipTimer = setTimeout(() => setShowSkip(true), 1000);
     return () => {
       cancelAnimationFrame(rafRef.current);
-      clearTimeout(skipTimer);
     };
   }, [completeIntro]);
 
@@ -398,11 +397,12 @@ export default function CinematicIntro() {
         />
       </div>
 
-      {/* Skip button */}
+      {/* Skip button — always visible */}
       {showSkip && (
         <button
           type="button"
           onClick={handleSkip}
+          data-ocid="intro.skip_button"
           style={{
             position: "absolute",
             bottom: "clamp(16px, 3vh, 32px)",

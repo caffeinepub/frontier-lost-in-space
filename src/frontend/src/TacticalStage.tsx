@@ -14,6 +14,7 @@
  */
 import { Canvas } from "@react-three/fiber";
 import { useEffect, useRef } from "react";
+import { useWeaponsStore } from "./combat/useWeapons";
 import BottomCommandNav from "./components/game/BottomCommandNav";
 import CameraController from "./components/game/CameraController";
 import CockpitFrame from "./components/game/CockpitFrame";
@@ -37,12 +38,27 @@ import { useShipMovementSetup } from "./motion/useShipMovementSetup";
 import { useTacticalLogStore } from "./tacticalLog/useTacticalLogStore";
 import { useTutorialStore } from "./tutorial/useTutorialStore";
 
+// Fix 1: Drive weapon cooldowns via rAF loop
+function WeaponsTick() {
+  useEffect(() => {
+    let last = performance.now();
+    let raf: number;
+    const loop = (now: number) => {
+      const dt = now - last;
+      last = now;
+      useWeaponsStore.getState().tick(dt);
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return null;
+}
+
+// Fix 2: Tutorial auto-start disabled for stability — user triggers manually
 function TutorialBootstrap() {
   const pendingTutorialStart = useIntroStore((s) => s.pendingTutorialStart);
   const consumeTutorialStart = useIntroStore((s) => s.consumeTutorialStart);
-  const startTutorial = useTutorialStore((s) => s.startTutorial);
-  const tutorialComplete = useTutorialStore((s) => s.tutorialComplete);
-  const tutorialSkipped = useTutorialStore((s) => s.tutorialSkipped);
   const hasRun = useRef(false);
 
   useEffect(() => {
@@ -50,16 +66,8 @@ function TutorialBootstrap() {
     if (!pendingTutorialStart) return;
     hasRun.current = true;
     consumeTutorialStart();
-    if (!tutorialComplete && !tutorialSkipped) {
-      startTutorial();
-    }
-  }, [
-    pendingTutorialStart,
-    consumeTutorialStart,
-    startTutorial,
-    tutorialComplete,
-    tutorialSkipped,
-  ]);
+    // Tutorial auto-start disabled for stability — user triggers manually
+  }, [pendingTutorialStart, consumeTutorialStart]);
 
   return null;
 }
@@ -93,6 +101,7 @@ export default function TacticalStage() {
     >
       <GameBootstrap />
       <TutorialBootstrap />
+      <WeaponsTick />
 
       {/* ────── TOP STATUS BAR ────── */}
       <PortraitStatusBar />
