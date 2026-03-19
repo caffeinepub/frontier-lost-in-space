@@ -1,36 +1,61 @@
-# Frontier - Lost In Space
+# Frontier — Lost In Space
 
 ## Current State
 
-- Core loop stable: globe targeting, weapons cooldown tick, intro bypass, tutorial opt-in
-- Tutorial: opt-in via CMD panel, EXIT always visible, stuck guards on all guarded steps
-- CommandPanel: functional with tutorial launch and system status
-- smokeTests: added tutorial, weapon/targeting, and globe suites
-- Globe, RadarSystem, SpaceBackground had performance and correctness issues
+Version 4 — post globe-optimization pass. Core loop confirmed stable:
+- Cinematic intro with skip bypass fallback
+- 3D Earth globe (React Three Fiber) with click-to-target on nodes
+- Cockpit frame + canopy overlays
+- Weapon control deck (pulse/rail/missile) with cooldown loop via WeaponsTick RAF
+- Radar system synced to ship orbital state
+- Portrait/landscape responsive layout
+- Mobile joystick + right drag zone for ship movement
+- Tutorial system: opt-in only, launched from CMD panel, with step guards + safe exit
+- Smoke tests: weapon fire, cooldown, targeting, tutorial launch/close, intro bypass
+- Globe error boundary for graceful failure isolation
+- Globe hit-mesh enlarged for fat-finger mobile targeting
+- Atmosphere/glow shells have raycast disabled so they don't intercept clicks
+- DPR capped at [1,2], star count halved on mobile, materials memoized
 
 ## Requested Changes (Diff)
 
 ### Add
-- `GlobeErrorBoundary` — React error boundary wrapping the Three.js Canvas; renders a dark fallback text if globe fails, never black-screens the app
-- `data-tutorial-target="globe-area"` DOM overlay over the canvas (pointer-events:none) for tutorial spotlight without stealing input
-- `runGlobeSmokeTests()` suite in smokeTests.ts: canvas present, WebGL context, no duplicate canvas, hit zone, tactical store, no blocking input layers
-- CoreLoopDebug strip in TacticalStage (localStorage.debug_coreloop='1')
+- `PROJECT_MAP.md` — comprehensive project sitemap, flow map, responsibility map, and architecture risk flags
+- Remove confirmed dead/duplicate files from the workspace
 
 ### Modify
-- **EarthGlobe**: all materials memoized (no per-render allocations); globe segments 64→48, atmo 32→28, glow 24→20; invisible wide hit-mesh (radius 1.72) for forgiving mobile tap; atmosphere/glow shells have `raycast={() => undefined}` so they never steal pointer events; texture cached at module level (no re-creation on hot reload)
-- **RadarSystem**: rAF loop now reads from `threatsRef`/`selectedRef` — no longer restarts on every render (was restarting because `sorted` was a new array each time). rAF started once with empty deps array.
-- **SpaceBackground**: star counts halved on narrow screens (<480px); geometry+material disposed on unmount; DustParticles count 70→50 (30 on mobile); ShootingStars count 5→3 on mobile
-- **TacticalStage**: Canvas `dpr={[1,2]}` to cap pixel ratio; GlobeErrorBoundary wraps Canvas; globe-area DOM overlay added
-- **smokeTests.ts**: Rewrote to use static top-level imports (removed dynamic `require() as typeof import()` pattern that broke TS parser when biome reformatted it); added `runGlobeSmokeTests()` and `runWeaponTargetingSmokeTests()`; `runAllSmokeTests` now includes all 10 suites
+- `spec.md` — updated to reflect Version 4 stable state and structure audit results
 
 ### Remove
-- Biome-incompatible dynamic `require()` casts from smokeTests
+- `audio/ElevenVoice.ts` — dead duplicate of `systems/ElevenVoice.ts`
+- `storage/StorageClient.ts` — dead duplicate of `utils/StorageClient.ts`
+- `components/game/WeaponDeck.tsx` — superseded by `WeaponControlDeck.tsx`, not imported anywhere
 
 ## Implementation Plan
 
-1. GlobeErrorBoundary.tsx — new class component
-2. EarthGlobe.tsx — memoize materials, reduce segments, add hit-mesh, disable raycasting on visual shells
-3. RadarSystem.tsx — fix rAF dep array (use refs, empty deps)
-4. SpaceBackground.tsx — disposal, mobile counts, IS_NARROW constant
-5. TacticalStage.tsx — dpr cap, error boundary, globe-area overlay, CoreLoopDebug
-6. smokeTests.ts — static imports, add globe suite
+1. Audit full file tree for duplicates, dead files, stubs, and orphans
+2. Delete confirmed safe-to-remove duplicates (3 files)
+3. Write PROJECT_MAP.md with:
+   - Final folder/file structure
+   - Dead/duplicate file registry
+   - Human-readable sitemap by category
+   - Player/app flow map
+   - System responsibility map
+   - Architecture risks (TacticalStage god component, duplicate weapon state, stub panels, orphaned QaPanel, motion DOM fragility, ICP persistence gaps)
+4. Update spec.md
+5. Validate build
+
+## Known Stubs (Next Implementation Targets)
+- `dashboard/panels/WeaponsPanel.tsx` — live but shows placeholder
+- `dashboard/panels/ScannerPanel.tsx` — live but shows placeholder
+- `dashboard/panels/EngineeringPanel.tsx` — live but shows placeholder
+- `dashboard/panels/LogsPanel.tsx` — live but shows placeholder
+- `components/game/QaPanel.tsx` — fully built but not mounted anywhere
+
+## Architecture Risks (See PROJECT_MAP.md §8 for details)
+1. TacticalStage.tsx = God Component (HIGH)
+2. Duplicate weapon state across 3 layers (MEDIUM)
+3. Stub dashboard panels are reachable from nav (MEDIUM)
+4. QaPanel orphaned (LOW)
+5. Motion engine uses direct DOM querySelector (LOW)
+6. ICP persistence scope unclear (LOW)
