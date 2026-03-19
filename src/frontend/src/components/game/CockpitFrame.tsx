@@ -1,7 +1,7 @@
 export default function CockpitFrame() {
   return (
     <img
-      src="/assets/uploads/7AECA372-28A5-4DD8-AA6A-AC7B24F1D273-1.png"
+      src="/assets/uploads/7AECA372-28A5-4DD8-AA6A-AC7B24F1D273-2.png"
       alt=""
       aria-hidden="true"
       onError={() =>

@@ -1,25 +1,165 @@
-// TacticalStage — main game view (placeholder until fully implemented)
+/**
+ * TacticalStage — Main game view.
+ *
+ * Layout (portrait mobile-first):
+ *   ┌──────────────────┐
+ *   │ PortraitStatusBar │  ← target/scan/cmd
+ *   ├──────────────────┤
+ *   │   3D Canvas        │  ← Earth + space + threats + cockpit frame
+ *   ├──────────────────┤
+ *   │ WeaponControlDeck │  ← PULSE / RAIL GUN / MISSILE
+ *   ├──────────────────┤
+ *   │ BottomCommandNav  │  ← CMD SCAN WPN SHIP LOG
+ *   └──────────────────┘
+ */
+import { Canvas } from "@react-three/fiber";
+import { useEffect, useRef } from "react";
+import BottomCommandNav from "./components/game/BottomCommandNav";
+import CameraController from "./components/game/CameraController";
+import CockpitFrame from "./components/game/CockpitFrame";
+import CombatEffectsLayer from "./components/game/CombatEffectsLayer";
+import EarthGlobe from "./components/game/EarthGlobe";
+import MobileJoystick from "./components/game/MobileJoystick";
+import PortraitCommandDrawer from "./components/game/PortraitCommandDrawer";
+import PortraitStatusBar from "./components/game/PortraitStatusBar";
+import RadarSystem from "./components/game/RadarSystem";
+import RightDragZone from "./components/game/RightDragZone";
+import ShipMotionLayer from "./components/game/ShipMotionLayer";
+import SpaceBackground from "./components/game/SpaceBackground";
+import TacticalLogPanel from "./components/game/TacticalLogPanel";
+import ThreatManager from "./components/game/ThreatManager";
+import TutorialOverlay from "./components/game/TutorialOverlay";
+import UpperCanopy from "./components/game/UpperCanopy";
+import VelocityIndicator from "./components/game/VelocityIndicator";
+import WeaponControlDeck from "./components/game/WeaponControlDeck";
+import { useIntroStore } from "./intro/useIntroStore";
+import { useShipMovementSetup } from "./motion/useShipMovementSetup";
+import { useTacticalLogStore } from "./tacticalLog/useTacticalLogStore";
+import { useTutorialStore } from "./tutorial/useTutorialStore";
+
+function TutorialBootstrap() {
+  const pendingTutorialStart = useIntroStore((s) => s.pendingTutorialStart);
+  const consumeTutorialStart = useIntroStore((s) => s.consumeTutorialStart);
+  const startTutorial = useTutorialStore((s) => s.startTutorial);
+  const tutorialComplete = useTutorialStore((s) => s.tutorialComplete);
+  const tutorialSkipped = useTutorialStore((s) => s.tutorialSkipped);
+  const hasRun = useRef(false);
+
+  useEffect(() => {
+    if (hasRun.current) return;
+    if (!pendingTutorialStart) return;
+    hasRun.current = true;
+    consumeTutorialStart();
+    if (!tutorialComplete && !tutorialSkipped) {
+      startTutorial();
+    }
+  }, [
+    pendingTutorialStart,
+    consumeTutorialStart,
+    startTutorial,
+    tutorialComplete,
+    tutorialSkipped,
+  ]);
+
+  return null;
+}
+
+function GameBootstrap() {
+  // Boot movement engine + keyboard/mouse listeners
+  useShipMovementSetup();
+
+  // Log system startup
+  useEffect(() => {
+    const addEntry = useTacticalLogStore.getState().addEntry;
+    addEntry({ type: "system", message: "A.E.G.I.S. TACTICAL COMMAND ONLINE" });
+    addEntry({ type: "system", message: "ALL SYSTEMS NOMINAL" });
+  }, []);
+
+  return null;
+}
+
 export default function TacticalStage() {
   return (
     <div
       style={{
         width: "100%",
         height: "100dvh",
-        background: "#000008",
         display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
+        flexDirection: "column",
+        background: "#000008",
+        overflow: "hidden",
+        position: "relative",
       }}
     >
-      <span
+      <GameBootstrap />
+      <TutorialBootstrap />
+
+      {/* ────── TOP STATUS BAR ────── */}
+      <PortraitStatusBar />
+
+      {/* ────── MAIN VIEWPORT ────── */}
+      <div
         style={{
-          color: "#00ccff",
-          fontFamily: "monospace",
-          letterSpacing: "0.2em",
+          flex: 1,
+          position: "relative",
+          overflow: "hidden",
+          minHeight: 0,
         }}
       >
-        TACTICAL STAGE — LOADING
-      </span>
+        {/* 3D Canvas — fills the viewport area */}
+        <Canvas
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 1,
+          }}
+          camera={{ fov: 55, near: 0.1, far: 200, position: [0, 0.9, 5] }}
+          gl={{ antialias: true, alpha: false }}
+        >
+          <CameraController />
+          <SpaceBackground />
+          <EarthGlobe />
+          <ThreatManager />
+          <CombatEffectsLayer />
+        </Canvas>
+
+        {/* Cockpit frame overlay — wraps the 3D viewport */}
+        <ShipMotionLayer factor={0.55} zIndex={15} leanMult={1}>
+          <CockpitFrame />
+          <UpperCanopy />
+        </ShipMotionLayer>
+
+        {/* Velocity indicator — bottom-left of viewport */}
+        <div
+          style={{
+            position: "absolute",
+            bottom: "clamp(12px, 3vh, 28px)",
+            left: "clamp(10px, 2.5vw, 20px)",
+            zIndex: 22,
+            pointerEvents: "none",
+          }}
+        >
+          <VelocityIndicator />
+        </div>
+
+        {/* Radar — bottom-right of viewport */}
+        <RadarSystem />
+
+        {/* Touch zones */}
+        <MobileJoystick />
+        <RightDragZone />
+      </div>
+
+      {/* ────── WEAPON DECK ────── */}
+      <WeaponControlDeck portrait />
+
+      {/* ────── BOTTOM NAV ────── */}
+      <BottomCommandNav />
+
+      {/* ────── OVERLAYS & DRAWERS ────── */}
+      <PortraitCommandDrawer />
+      <TacticalLogPanel />
+      <TutorialOverlay />
     </div>
   );
 }
