@@ -2,14 +2,9 @@ import { useCallback, useState } from "react";
 import { useThreatStore } from "../../combat/useThreatStore";
 import { useWeaponsStore } from "../../combat/useWeapons";
 import { useTacticalStore } from "../../hooks/useTacticalStore";
-import { runAllSmokeTests } from "../../tests/smokeTests";
+import { type GlobalQaSummary, runAllSmokeTests } from "../../tests/smokeTests";
 import { runStressTests } from "../../tests/stressTests";
-import type {
-  GlobalQaSummary,
-  QaCategory,
-  QaCheckResult,
-  QaStatus,
-} from "../../types";
+import type { QaCategory, QaCheckResult, QaStatus } from "../../types";
 
 const STATUS_ICON: Record<QaStatus, string> = {
   PASS: "✓",
@@ -29,16 +24,6 @@ const STATUS_COLOR: Record<QaStatus, string> = {
   PENDING: "rgba(100,180,220,0.6)",
 };
 
-const CATEGORY_LABELS: Record<QaCategory, string> = {
-  UI: "UI / RENDER",
-  GAMEPLAY: "GAMEPLAY",
-  BACKEND: "BACKEND / REDIS",
-  LIVE_DATA: "LIVE DATA",
-  RESPONSIVE: "RESPONSIVE",
-  AUDIO: "AUDIO",
-  PERFORMANCE: "PERFORMANCE",
-};
-
 export default function QaPanel() {
   const [open, setOpen] = useState(false);
   const [summary, setSummary] = useState<GlobalQaSummary | null>(null);
@@ -50,24 +35,18 @@ export default function QaPanel() {
   );
 
   const selectedNode = useTacticalStore((s) => s.selectedNode);
-  const scanMode = useTacticalStore((s) => s.scanMode);
-  const nodeData = useTacticalStore((s) => s.nodeData);
   const threats = useThreatStore((s) => s.threats);
-  const weapons = useWeaponsStore((s) => s.weapons);
 
   const runTests = useCallback(async () => {
     setRunning(true);
     await new Promise<void>((r) => setTimeout(r, 50));
-    const result = runAllSmokeTests({
+    const result = await runAllSmokeTests({
       selectedNode,
-      scanMode,
-      nodeData,
       threats,
-      weapons,
     });
     setSummary(result);
     setRunning(false);
-  }, [selectedNode, scanMode, nodeData, threats, weapons]);
+  }, [selectedNode, threats]);
 
   const runStress = useCallback(async () => {
     setStressRunning(true);
@@ -384,12 +363,17 @@ export default function QaPanel() {
       <div style={{ overflowY: "auto" as const, flex: 1 }}>
         {hasSummary &&
           summary!.sections.map((section) => {
-            const key = section.section;
+            const key = section.suite;
             const expanded = expandedSections.has(key);
-            const sectionFail = section.failCount > 0;
+            const sectionFail = section.fail > 0;
             const sectionColor = sectionFail
               ? "rgba(255,80,80,0.85)"
-              : section.passCount === section.totalCount
+              : section.pass ===
+                  section.pass +
+                    section.fail +
+                    section.skip +
+                    section.partial +
+                    section.notImplemented
                 ? "rgba(0,255,150,0.8)"
                 : "rgba(255,200,50,0.8)";
 
@@ -422,26 +406,26 @@ export default function QaPanel() {
                       flex: 1,
                     }}
                   >
-                    {expanded ? "▾" : "▸"} {CATEGORY_LABELS[key as QaCategory]}
+                    {expanded ? "▾" : "▸"} {key}
                   </span>
                   <span style={{ color: STATUS_COLOR.PASS, fontSize: 8 }}>
-                    {section.passCount}P
+                    {section.pass}P
                   </span>
-                  {section.failCount > 0 && (
+                  {section.fail > 0 && (
                     <span style={{ color: STATUS_COLOR.FAIL, fontSize: 8 }}>
-                      {section.failCount}F
+                      {section.fail}F
                     </span>
                   )}
                   <span style={{ color: STATUS_COLOR.SKIP, fontSize: 8 }}>
-                    {section.skipCount}S
+                    {section.skip}S
                   </span>
                 </button>
 
                 {expanded && (
                   <div style={{ paddingBottom: 4 }}>
-                    {section.checks.map((c) => (
+                    {section.results.map((c) => (
                       <div
-                        key={c.id}
+                        key={c.name}
                         style={{
                           display: "flex",
                           flexDirection: "column" as const,
@@ -472,10 +456,10 @@ export default function QaPanel() {
                               lineHeight: 1.4,
                             }}
                           >
-                            {c.label}
+                            {c.name}
                           </span>
                         </div>
-                        {c.message && (
+                        {c.detail && (
                           <div
                             style={{
                               color: "rgba(120,150,180,0.55)",
@@ -486,7 +470,7 @@ export default function QaPanel() {
                               marginTop: 1,
                             }}
                           >
-                            {c.message}
+                            {c.detail}
                           </div>
                         )}
                       </div>

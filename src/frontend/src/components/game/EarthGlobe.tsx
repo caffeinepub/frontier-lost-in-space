@@ -1,7 +1,20 @@
 /**
  * EarthGlobe — 3D Earth sphere at the scene origin.
- * Renders a layered planet with atmosphere glow and hexagonal grid overlay.
- * Clickable for target designation (creates TGT-xxx targets).
+ *
+ * Performance:
+ *   - Texture built once at 512px via useMemo
+ *   - All materials memoized (no per-render allocations)
+ *   - Geometry segments reduced from 64→48 (surface) / 28 (atmo) / 20 (glow)
+ *   - depthWrite=false + AdditiveBlending on transparent shells
+ *   - Invisible wider hit-mesh catches fat-finger taps on mobile
+ *
+ * Pointer passthrough:
+ *   - Only the hit mesh and globe surface capture pointer events
+ *   - Atmosphere / glow shells do NOT capture pointer events (raycast disabled)
+ *
+ * Targeting:
+ *   - tap/click → lat/lng calculation → selectNode + setGlobeTarget
+ *   - tutorial setTargetDetected called when tutorial is active
  */
 import { useFrame } from "@react-three/fiber";
 import { useMemo, useRef, useState } from "react";
@@ -11,18 +24,21 @@ import { useTutorialStore } from "../../tutorial/useTutorialStore";
 
 const EARTH_RADIUS = 1.5;
 const ATMO_RADIUS = 1.62;
+const HIT_RADIUS = 1.72; // slightly larger for forgiving mobile taps
 
-function buildHexTexture(size: number): THREE.CanvasTexture {
+// Build canvas texture once — kept outside component to allow reuse across hot-reloads
+let _cachedTexture: THREE.CanvasTexture | null = null;
+function getHexTexture(): THREE.CanvasTexture {
+  if (_cachedTexture) return _cachedTexture;
+  const size = 512;
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext("2d")!;
 
-  // Dark ocean base
   ctx.fillStyle = "#071830";
   ctx.fillRect(0, 0, size, size);
 
-  // Atmosphere gradient overlay
   const grad = ctx.createRadialGradient(
     size * 0.35,
     size * 0.3,
@@ -37,12 +53,10 @@ function buildHexTexture(size: number): THREE.CanvasTexture {
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, size, size);
 
-  // Hexagonal grid
   const hexR = size / 14;
   const hexH = hexR * Math.sqrt(3);
   ctx.strokeStyle = "rgba(0,180,255,0.22)";
   ctx.lineWidth = 0.8;
-
   for (let row = -1; row < size / hexH + 2; row++) {
     for (let col = -1; col < size / (hexR * 1.5) + 2; col++) {
       const x = col * hexR * 3;
@@ -60,7 +74,6 @@ function buildHexTexture(size: number): THREE.CanvasTexture {
     }
   }
 
-  // Continent-like landmass blobs
   const blobs = [
     { x: 0.35, y: 0.38, rx: 0.12, ry: 0.09, rot: 0.3 },
     { x: 0.55, y: 0.42, rx: 0.09, ry: 0.14, rot: -0.2 },
@@ -82,7 +95,6 @@ function buildHexTexture(size: number): THREE.CanvasTexture {
     ctx.restore();
   }
 
-  // Cloud wisps
   ctx.fillStyle = "rgba(200,220,255,0.07)";
   for (let i = 0; i < 6; i++) {
     ctx.save();
@@ -98,7 +110,8 @@ function buildHexTexture(size: number): THREE.CanvasTexture {
     ctx.restore();
   }
 
-  return new THREE.CanvasTexture(canvas);
+  _cachedTexture = new THREE.CanvasTexture(canvas);
+  return _cachedTexture;
 }
 
 export default function EarthGlobe() {
@@ -106,25 +119,69 @@ export default function EarthGlobe() {
   const atmoRef = useRef<THREE.Mesh>(null!);
   const glowRef = useRef<THREE.Mesh>(null!);
   const [hovered, setHovered] = useState(false);
+
   const selectNode = useTacticalStore((s) => s.selectNode);
   const setGlobeTarget = useTacticalStore((s) => s.setGlobeTarget);
   const tutorialActive = useTutorialStore((s) => s.tutorialActive);
   const setTargetDetected = useTutorialStore((s) => s.setTargetDetected);
 
-  const texture = useMemo(() => buildHexTexture(512), []);
+  // Stable texture reference — never re-created
+  const texture = useMemo(() => getHexTexture(), []);
+
+  // Memoized materials — no per-render allocations
+  const globeMat = useMemo(
+    () =>
+      new THREE.MeshPhongMaterial({
+        map: texture,
+        emissive: new THREE.Color("#001840"),
+        emissiveIntensity: 0.35,
+        shininess: 18,
+        specular: new THREE.Color("#113366"),
+      }),
+    [texture],
+  );
+
+  const atmoMat = useMemo(
+    () =>
+      new THREE.MeshPhongMaterial({
+        color: new THREE.Color("#1a6fff"),
+        transparent: true,
+        opacity: 0.09,
+        side: THREE.FrontSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    [],
+  );
+
+  const glowMat = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: new THREE.Color("#3388ff"),
+        transparent: true,
+        opacity: 0.18,
+        side: THREE.BackSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    [],
+  );
+
+  // Invisible wide hit mesh for forgiving touch targets — no visible material
+  const hitMat = useMemo(
+    () => new THREE.MeshBasicMaterial({ visible: false }),
+    [],
+  );
 
   useFrame(({ clock }) => {
-    if (globeRef.current) {
-      globeRef.current.rotation.y = clock.getElapsedTime() * 0.04;
-    }
-    if (atmoRef.current) {
-      atmoRef.current.rotation.y = clock.getElapsedTime() * 0.025;
-    }
+    const t = clock.getElapsedTime();
+    if (globeRef.current) globeRef.current.rotation.y = t * 0.04;
+    if (atmoRef.current) atmoRef.current.rotation.y = t * 0.025;
     if (glowRef.current) {
-      const pulse = 0.85 + 0.08 * Math.sin(clock.getElapsedTime() * 0.8);
-      (glowRef.current.material as THREE.MeshBasicMaterial).opacity =
-        pulse * 0.18;
+      glowMat.opacity = (0.85 + 0.08 * Math.sin(t * 0.8)) * 0.18;
     }
+    // Update atmo hover opacity without creating new material
+    if (atmoMat) atmoMat.opacity = hovered ? 0.14 : 0.09;
   });
 
   const handleClick = (e: {
@@ -133,9 +190,7 @@ export default function EarthGlobe() {
   }) => {
     e.stopPropagation?.();
     if (!e.point) return;
-    const point = e.point as THREE.Vector3;
-    const norm = point.clone().normalize();
-    // Convert to lat/lng
+    const norm = e.point.clone().normalize();
     const lat = (Math.asin(norm.y) * 180) / Math.PI;
     const lng = (Math.atan2(norm.x, norm.z) * 180) / Math.PI;
     const targetId = `TGT-${Date.now().toString(36)}`;
@@ -146,51 +201,35 @@ export default function EarthGlobe() {
 
   return (
     <group>
-      {/* Main Earth sphere */}
+      {/* Main Earth sphere — low-mid segment count, good quality at mobile DPR */}
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: Three.js mesh */}
       <mesh
         ref={globeRef}
         onClick={handleClick as unknown as () => void}
         onPointerOver={() => setHovered(true)}
         onPointerOut={() => setHovered(false)}
+        material={globeMat}
       >
-        <sphereGeometry args={[EARTH_RADIUS, 64, 64]} />
-        <meshPhongMaterial
-          map={texture}
-          emissive="#001840"
-          emissiveIntensity={0.35}
-          shininess={18}
-          specular="#113366"
-        />
+        <sphereGeometry args={[EARTH_RADIUS, 48, 48]} />
       </mesh>
 
-      {/* Atmosphere shell */}
-      <mesh ref={atmoRef}>
-        <sphereGeometry args={[ATMO_RADIUS, 32, 32]} />
-        <meshPhongMaterial
-          color="#1a6fff"
-          transparent
-          opacity={hovered ? 0.14 : 0.09}
-          side={THREE.FrontSide}
-          depthWrite={false}
-          blending={THREE.AdditiveBlending}
-        />
+      {/* Transparent hit extension — wider tap target for mobile, no visual effect */}
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: Three.js mesh */}
+      <mesh onClick={handleClick as unknown as () => void} material={hitMat}>
+        <sphereGeometry args={[HIT_RADIUS, 16, 16]} />
       </mesh>
 
-      {/* Outer glow ring */}
-      <mesh ref={glowRef}>
-        <sphereGeometry args={[ATMO_RADIUS + 0.12, 24, 24]} />
-        <meshBasicMaterial
-          color="#3388ff"
-          transparent
-          opacity={0.18}
-          side={THREE.BackSide}
-          depthWrite={false}
-          blending={THREE.AdditiveBlending}
-        />
+      {/* Atmosphere shell — no raycasting (visual only) */}
+      <mesh ref={atmoRef} material={atmoMat} raycast={() => undefined}>
+        <sphereGeometry args={[ATMO_RADIUS, 28, 28]} />
       </mesh>
 
-      {/* Lighting */}
+      {/* Outer glow — no raycasting (visual only) */}
+      <mesh ref={glowRef} material={glowMat} raycast={() => undefined}>
+        <sphereGeometry args={[ATMO_RADIUS + 0.12, 20, 20]} />
+      </mesh>
+
+      {/* Lighting — kept minimal for draw call budget */}
       <ambientLight intensity={0.25} />
       <directionalLight position={[4, 3, 5]} intensity={1.4} color="#ffffff" />
       <pointLight position={[0, 0, 0]} intensity={0.08} color="#2255aa" />

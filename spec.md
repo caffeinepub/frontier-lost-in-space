@@ -2,37 +2,35 @@
 
 ## Current State
 
-The game renders via App.tsx → CinematicIntro → TacticalStage. The core layout (TacticalStage) uses a portrait-first flex column:
-- PortraitStatusBar (top — target readout, SCAN, CMD buttons + threat alerts)
-- Main viewport (3D Canvas with EarthGlobe + cockpit frame overlay + VelocityIndicator + RadarSystem)
-- WeaponControlDeck (weapon pills row)
-- BottomCommandNav (CMD/SCAN/WPN/SHIP/LOG tabs)
-- TutorialOverlay + TacticalLogPanel as floating overlays
-
-Known bugs identified from code audit:
-1. **useWeaponsStore.tick(dt) is never called** — there is no game loop driving weapon cooldowns. After any weapon fires, it enters COOLDOWN status and never recovers to READY because nothing decrements currentCooldown over time.
-2. **TutorialBootstrap auto-starts tutorial** — on first play, tutorial auto-starts via pendingTutorialStart flag. The TutorialOverlay at z-index 200 covers the game and the progressive-unlock state flags (canFire etc.) may create confusion about weapon availability.
-3. **Intro skip button delayed 1 second** — minor UX friction.
-4. **No duplicate alert banners** in current code — PortraitStatusBar is the sole threat alert renderer.
+- Core loop stable: globe targeting, weapons cooldown tick, intro bypass, tutorial opt-in
+- Tutorial: opt-in via CMD panel, EXIT always visible, stuck guards on all guarded steps
+- CommandPanel: functional with tutorial launch and system status
+- smokeTests: added tutorial, weapon/targeting, and globe suites
+- Globe, RadarSystem, SpaceBackground had performance and correctness issues
 
 ## Requested Changes (Diff)
 
 ### Add
-- WeaponsTick component in TacticalStage: runs requestAnimationFrame game loop calling useWeaponsStore.getState().tick(dt) every frame
-- Intro skip button visible immediately (0ms delay instead of 1000ms)
+- `GlobeErrorBoundary` — React error boundary wrapping the Three.js Canvas; renders a dark fallback text if globe fails, never black-screens the app
+- `data-tutorial-target="globe-area"` DOM overlay over the canvas (pointer-events:none) for tutorial spotlight without stealing input
+- `runGlobeSmokeTests()` suite in smokeTests.ts: canvas present, WebGL context, no duplicate canvas, hit zone, tactical store, no blocking input layers
+- CoreLoopDebug strip in TacticalStage (localStorage.debug_coreloop='1')
 
 ### Modify
-- TutorialBootstrap: disable auto-start of tutorial — tutorial should only activate when user manually triggers it from a menu. This prevents the overlay from locking the UI on first play.
-- TacticalStage: ensure WeaponsTick is mounted at the top level of TacticalStage
-- App.tsx: add safety fallback — if introComplete is false and introPlaying is false after mount, show game anyway (prevents users getting stuck with black screen if localStorage state is corrupted)
+- **EarthGlobe**: all materials memoized (no per-render allocations); globe segments 64→48, atmo 32→28, glow 24→20; invisible wide hit-mesh (radius 1.72) for forgiving mobile tap; atmosphere/glow shells have `raycast={() => undefined}` so they never steal pointer events; texture cached at module level (no re-creation on hot reload)
+- **RadarSystem**: rAF loop now reads from `threatsRef`/`selectedRef` — no longer restarts on every render (was restarting because `sorted` was a new array each time). rAF started once with empty deps array.
+- **SpaceBackground**: star counts halved on narrow screens (<480px); geometry+material disposed on unmount; DustParticles count 70→50 (30 on mobile); ShootingStars count 5→3 on mobile
+- **TacticalStage**: Canvas `dpr={[1,2]}` to cap pixel ratio; GlobeErrorBoundary wraps Canvas; globe-area DOM overlay added
+- **smokeTests.ts**: Rewrote to use static top-level imports (removed dynamic `require() as typeof import()` pattern that broke TS parser when biome reformatted it); added `runGlobeSmokeTests()` and `runWeaponTargetingSmokeTests()`; `runAllSmokeTests` now includes all 10 suites
 
 ### Remove
-- No layers need removal — audit confirms no duplicate banners or stuck overlays in current codebase
+- Biome-incompatible dynamic `require()` casts from smokeTests
 
 ## Implementation Plan
 
-1. Add WeaponsTick component (rAF loop → tick) into TacticalStage.tsx
-2. In TutorialBootstrap inside TacticalStage.tsx, remove auto-start: do not call startTutorial() automatically
-3. In App.tsx, add a 500ms fallback: if after mount introPlaying is false AND introComplete is false, call skipIntro() to bypass into game
-4. In CinematicIntro.tsx, show skip button at 0ms delay
-5. Validate build passes
+1. GlobeErrorBoundary.tsx — new class component
+2. EarthGlobe.tsx — memoize materials, reduce segments, add hit-mesh, disable raycasting on visual shells
+3. RadarSystem.tsx — fix rAF dep array (use refs, empty deps)
+4. SpaceBackground.tsx — disposal, mobile counts, IS_NARROW constant
+5. TacticalStage.tsx — dpr cap, error boundary, globe-area overlay, CoreLoopDebug
+6. smokeTests.ts — static imports, add globe suite

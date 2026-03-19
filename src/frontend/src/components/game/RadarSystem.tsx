@@ -1,10 +1,10 @@
 /**
  * RadarSystem — tactical radar with ship-heading-relative blip positioning.
  *
- * Blip angle is computed as:
- *   worldAngle - shipOrbitalTheta
- * so contacts always appear relative to the ship's current heading,
- * not as fixed world-space angles.
+ * Performance fix: threats/selectedNode are kept in refs so the rAF loop
+ * never needs to restart when those change. Previously the useEffect dep
+ * on `[sorted, selectedNode]` caused a new rAF registration every re-render
+ * because `sorted` was a new array reference each time.
  */
 import { useEffect, useRef } from "react";
 import type { AsteroidThreat } from "../../combat/useThreatStore";
@@ -31,8 +31,14 @@ const PRIORITY_COLOR: Record<string, string> = {
   INCOMING: "#00ccff",
 };
 
+const SORT_ORDER = [
+  "INTERCEPT_WINDOW",
+  "PRIORITY_TARGET",
+  "IMPACT_RISK",
+  "INCOMING",
+];
+
 function getThreatAngle(t: AsteroidThreat, shipTheta: number): number {
-  // Relative bearing: world azimuth minus ship orbital theta
   return t.startAzimuth - shipTheta;
 }
 
@@ -45,20 +51,21 @@ export default function RadarSystem() {
   const selectedNode = useTacticalStore((s) => s.selectedNode);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  // Stable refs so rAF never needs to restart
+  const threatsRef = useRef(threats);
+  const selectedRef = useRef(selectedNode);
+  useEffect(() => {
+    threatsRef.current = threats;
+  }, [threats]);
+  useEffect(() => {
+    selectedRef.current = selectedNode;
+  }, [selectedNode]);
+
   const active = threats.filter(
     (t) => t.status !== "DESTROYED" && t.status !== "SURVIVED",
   );
 
-  const sorted = [...active].sort((a, b) => {
-    const order = [
-      "INTERCEPT_WINDOW",
-      "PRIORITY_TARGET",
-      "IMPACT_RISK",
-      "INCOMING",
-    ];
-    return order.indexOf(a.status) - order.indexOf(b.status);
-  });
-
+  // Single rAF loop — started once, reads from refs each frame
   useEffect(() => {
     let raf: number;
     const canvas = canvasRef.current;
@@ -68,8 +75,16 @@ export default function RadarSystem() {
 
     const draw = (ts: number) => {
       const sweep = (ts * 0.001 * 0.65) % (Math.PI * 2);
-      // Read ship heading each frame for heading-relative blips
       const shipTheta = useShipStore.getState().orbitalTheta;
+
+      const currentThreats = threatsRef.current;
+      const currentSelected = selectedRef.current;
+      const activeThreats = currentThreats.filter(
+        (t) => t.status !== "DESTROYED" && t.status !== "SURVIVED",
+      );
+      const sorted = [...activeThreats].sort(
+        (a, b) => SORT_ORDER.indexOf(a.status) - SORT_ORDER.indexOf(b.status),
+      );
 
       ctx.clearRect(0, 0, SIZE, SIZE);
 
@@ -87,11 +102,11 @@ export default function RadarSystem() {
       ctx.stroke();
 
       // Range rings
-      for (const r of [MAX_R * 0.35, MAX_R * 0.65, MAX_R]) {
+      for (const ringR of [MAX_R * 0.35, MAX_R * 0.65, MAX_R]) {
         ctx.strokeStyle = "rgba(0,180,255,0.18)";
         ctx.lineWidth = 0.5;
         ctx.beginPath();
-        ctx.arc(CX, CY, r, 0, Math.PI * 2);
+        ctx.arc(CX, CY, ringR, 0, Math.PI * 2);
         ctx.stroke();
       }
 
@@ -126,7 +141,7 @@ export default function RadarSystem() {
       ctx.stroke();
       ctx.restore();
 
-      // Heading indicator (forward tick at top)
+      // Heading tick
       ctx.strokeStyle = "rgba(0,255,200,0.5)";
       ctx.lineWidth = 1.2;
       ctx.beginPath();
@@ -137,12 +152,12 @@ export default function RadarSystem() {
       // Threat blips — heading-relative
       for (const t of sorted) {
         const angle = getThreatAngle(t, shipTheta) - Math.PI / 2;
-        const r = getThreatRadius(t);
-        const bx = CX + Math.cos(angle) * r;
-        const by = CY + Math.sin(angle) * r;
+        const rr = getThreatRadius(t);
+        const bx = CX + Math.cos(angle) * rr;
+        const by = CY + Math.sin(angle) * rr;
         const color = PRIORITY_COLOR[t.status] ?? "#00ccff";
-        const isSelected = selectedNode === t.id;
-        const priority = PRIORITY_LABEL[t.status] ?? "T?";
+        const isSelected = currentSelected === t.id;
+        const label = PRIORITY_LABEL[t.status] ?? "T?";
 
         const grd = ctx.createRadialGradient(bx, by, 0, bx, by, 8);
         grd.addColorStop(0, `${color}cc`);
@@ -159,7 +174,7 @@ export default function RadarSystem() {
 
         ctx.fillStyle = color;
         ctx.font = "bold 7px monospace";
-        ctx.fillText(priority, bx + 4, by - 2);
+        ctx.fillText(label, bx + 4, by - 2);
 
         if (isSelected) {
           ctx.strokeStyle = "#ffffff";
@@ -181,7 +196,9 @@ export default function RadarSystem() {
 
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
-  }, [sorted, selectedNode]);
+    // Empty deps — intentional: reads from refs inside the loop
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div

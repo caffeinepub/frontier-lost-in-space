@@ -1,15 +1,12 @@
 /**
- * TutorialOverlay — Tutorial UI with back/skip navigation and fixed voice timing.
+ * TutorialOverlay — Opt-in tutorial UI.
  *
- * Voice fix: speech is delayed 350ms after step change and cancelled if step
- * changes again before it fires. This prevents mid-transition voice bursts.
- *
- * Back: allowed on intro, radar, control_panel (safe steps).
- * Skip: shown after STUCK_THRESHOLD_MS on guarded steps.
- *
- * TARGET STEP FIX:
- *   - Shows a CONTINUE → bypass button after 8 seconds on the target step.
- *   - Updated instruction text with iPhone-specific hint.
+ * Guardrails:
+ *   - EXIT button is ALWAYS visible — player is never trapped
+ *   - SKIP STEP unlocks for all guarded steps via stuck timer
+ *   - target step: CONTINUE bypass after 8s or 3 taps
+ *   - pointer-events: none on outer wrapper so background UI remains usable
+ *   - z-index 200 on card only (not full screen)
  */
 import { useEffect, useRef, useState } from "react";
 import { speak, stopSpeech } from "../../audio/aegisVoice";
@@ -50,7 +47,7 @@ const STEP_CONFIG: Record<TutorialStep, StepConfig> = {
   intro: {
     title: "SYSTEMS DAMAGED",
     instruction:
-      "Commander \u2014 A.E.G.I.S. is partially operational. Your ship has suffered catastrophic failure.",
+      "Commander — A.E.G.I.S. is partially operational. Your ship has suffered catastrophic failure.",
     subtext: "Calibration sequence initiating...",
     autoAdvance: 4000,
   },
@@ -170,7 +167,6 @@ const STEP_ORDER: TutorialStep[] = [
 
 export default function TutorialOverlay() {
   const tutorialActive = useTutorialStore((s) => s.tutorialActive);
-  const tutorialComplete = useTutorialStore((s) => s.tutorialComplete);
   const currentStep = useTutorialStore((s) => s.currentStep);
   const canSkipCurrentStep = useTutorialStore((s) => s.canSkipCurrentStep);
   const skipTutorial = useTutorialStore((s) => s.skipTutorial);
@@ -181,8 +177,6 @@ export default function TutorialOverlay() {
   const autoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const spokenStepRef = useRef<TutorialStep | null>(null);
-
-  // --- Target step bypass (show CONTINUE after 8 seconds) ---
   const [showTargetBypass, setShowTargetBypass] = useState(false);
 
   useEffect(() => {
@@ -198,10 +192,10 @@ export default function TutorialOverlay() {
   const stepIndex = STEP_ORDER.indexOf(currentStep);
   const totalSteps = STEP_ORDER.length - 1;
   const canGoBack = BACK_SAFE.has(currentStep);
-
-  // Whether to show the CONTINUE bypass for the target step
   const showContinueBypass =
     currentStep === "target" && (showTargetBypass || canSkipCurrentStep);
+  // SKIP STEP is available for all guarded steps once stuck timer fires
+  const showSkipStep = canSkipCurrentStep && currentStep !== "target";
 
   useEffect(() => {
     injectSpotlightStyles();
@@ -214,22 +208,17 @@ export default function TutorialOverlay() {
       return;
     }
     applySpotlight(config.targetAttr);
-
-    // Cancel any pending voice from previous step; also clear lingering subtitle
     if (voiceTimerRef.current) {
       clearTimeout(voiceTimerRef.current);
       voiceTimerRef.current = null;
     }
     useSubtitleStore.getState().clear();
     stopSpeech();
-
-    // Delayed voice: fire 350ms after step settles to avoid mid-transition bursts
     if (spokenStepRef.current !== currentStep) {
       spokenStepRef.current = currentStep;
       const voiceLine = STEP_VOICE[currentStep];
       if (voiceLine) {
         voiceTimerRef.current = setTimeout(() => {
-          // Double-check step hasn't changed again
           if (useTutorialStore.getState().currentStep !== currentStep) return;
           if (currentStep === "intro") {
             speakEleven(voiceLine).catch(() => speak(voiceLine));
@@ -239,7 +228,6 @@ export default function TutorialOverlay() {
         }, 350);
       }
     }
-
     if (config.autoAdvance) {
       autoTimerRef.current = setTimeout(
         () => advanceStep(),
@@ -264,6 +252,7 @@ export default function TutorialOverlay() {
         pointerEvents: "none",
       }}
     >
+      {/* dim overlay — pointer-events none so background UI stays accessible */}
       <div
         style={{
           position: "absolute",
@@ -273,6 +262,7 @@ export default function TutorialOverlay() {
         }}
       />
 
+      {/* Tutorial card */}
       <div
         style={{
           position: "absolute",
@@ -291,14 +281,13 @@ export default function TutorialOverlay() {
           animation: "tutCardIn 0.3s cubic-bezier(0.4,0,0.2,1)",
         }}
       >
-        <style>{`
-          @keyframes tutCardIn {
-            from { opacity: 0; transform: translateX(-50%) translateY(16px); }
-            to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+        <style>
+          {
+            "@keyframes tutCardIn { from { opacity: 0; transform: translateX(-50%) translateY(16px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }"
           }
-        `}</style>
+        </style>
 
-        {/* Header row: step label + dot progress */}
+        {/* Header row: step label + progress dots + EXIT */}
         <div
           style={{
             display: "flex",
@@ -317,7 +306,7 @@ export default function TutorialOverlay() {
           >
             {STEP_LABELS[currentStep]}
           </span>
-          <div style={{ display: "flex", gap: 4 }}>
+          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
             {STEP_ORDER.slice(0, totalSteps).map((s, i) => (
               <div
                 key={s}
@@ -338,6 +327,27 @@ export default function TutorialOverlay() {
               />
             ))}
           </div>
+          {/* GUARDRAIL: EXIT is always visible — player is never trapped */}
+          <button
+            type="button"
+            onClick={skipTutorial}
+            data-ocid="tutorial.exit.button"
+            style={{
+              fontFamily: "monospace",
+              fontSize: "clamp(7px, 0.9vw, 9px)",
+              letterSpacing: "0.2em",
+              color: "rgba(255,80,80,0.7)",
+              background: "transparent",
+              border: "1px solid rgba(255,80,80,0.35)",
+              borderRadius: 3,
+              padding: "3px 8px",
+              cursor: "pointer",
+              outline: "none",
+              WebkitTapHighlightColor: "transparent",
+            }}
+          >
+            EXIT
+          </button>
         </div>
 
         <div
@@ -351,7 +361,6 @@ export default function TutorialOverlay() {
         >
           A.E.G.I.S.
         </div>
-
         <div
           style={{
             fontFamily: "monospace",
@@ -365,7 +374,6 @@ export default function TutorialOverlay() {
         >
           {config.title}
         </div>
-
         <div
           style={{
             fontFamily: "monospace",
@@ -378,7 +386,6 @@ export default function TutorialOverlay() {
         >
           {config.instruction}
         </div>
-
         {config.subtext && (
           <div
             style={{
@@ -420,7 +427,6 @@ export default function TutorialOverlay() {
           </div>
         )}
 
-        {/* Navigation row: back + skip controls */}
         <div
           style={{
             display: "flex",
@@ -429,7 +435,6 @@ export default function TutorialOverlay() {
             flexWrap: "wrap" as const,
           }}
         >
-          {/* Back button: only on safe steps */}
           {canGoBack && stepIndex > 0 && (
             <button
               type="button"
@@ -439,8 +444,6 @@ export default function TutorialOverlay() {
               &#8592; BACK
             </button>
           )}
-
-          {/* CONTINUE bypass for the target step — shown after 8s or 3 taps */}
           {showContinueBypass && (
             <button
               type="button"
@@ -451,26 +454,13 @@ export default function TutorialOverlay() {
               CONTINUE &#8594;
             </button>
           )}
-
-          {/* Skip current guarded step (non-target steps) */}
-          {canSkipCurrentStep && currentStep !== "target" && (
+          {showSkipStep && (
             <button
               type="button"
               onClick={skipCurrentStep}
               style={navBtnStyle("rgba(255,160,40,0.6)")}
             >
               SKIP STEP
-            </button>
-          )}
-
-          {/* Skip entire tutorial (returning players only) */}
-          {tutorialComplete && (
-            <button
-              type="button"
-              onClick={skipTutorial}
-              style={navBtnStyle("rgba(0,160,180,0.4)")}
-            >
-              SKIP TUTORIAL
             </button>
           )}
         </div>

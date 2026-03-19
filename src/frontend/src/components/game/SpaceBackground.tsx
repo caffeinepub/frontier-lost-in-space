@@ -1,7 +1,19 @@
+/**
+ * SpaceBackground — layered starfield + galaxy drift + shooting stars + dust.
+ *
+ * Performance:
+ *   - Star counts reduced on narrow screens (< 480px)
+ *   - All geometries and materials disposed on unmount
+ *   - Galaxy planes use minimal segments (plane geometry = 2 tris each)
+ *   - Shooting star lines reuse pre-allocated geometry/material objects
+ *   - DustParticles count capped at 50 (was 70)
+ */
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { getSway } from "../../motion/shipMotionEngine";
+
+const IS_NARROW = typeof window !== "undefined" && window.innerWidth < 480;
 
 function spherePositions(count: number, rMin: number, rMax: number) {
   const arr = new Float32Array(count * 3);
@@ -40,11 +52,13 @@ function StarLayer({
     () => spherePositions(count, rMin, rMax),
     [count, rMin, rMax],
   );
+
   const geom = useMemo(() => {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     return g;
   }, [positions]);
+
   const mat = useMemo(
     () =>
       new THREE.PointsMaterial({
@@ -56,6 +70,15 @@ function StarLayer({
         depthWrite: false,
       }),
     [color, size, opacity],
+  );
+
+  // Dispose on unmount
+  useEffect(
+    () => () => {
+      geom.dispose();
+      mat.dispose();
+    },
+    [geom, mat],
   );
 
   useFrame(() => {
@@ -78,12 +101,7 @@ function GalaxyDrift() {
   const ref1 = useRef<THREE.Mesh>(null!);
   const ref2 = useRef<THREE.Mesh>(null!);
   const ref3 = useRef<THREE.Mesh>(null!);
-
-  const refs = useMemo(
-    () => [ref0, ref1, ref2, ref3],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  );
+  const refs = useMemo(() => [ref0, ref1, ref2, ref3], []);
 
   const seed = useMemo(() => Math.random() * 100, []);
   const cfg = useMemo(
@@ -215,7 +233,7 @@ interface StreakState {
 }
 
 function ShootingStars() {
-  const COUNT = 5;
+  const COUNT = IS_NARROW ? 3 : 5;
   const nextSpawn = useRef(6 + Math.random() * 10);
 
   const entries = useMemo(
@@ -236,7 +254,18 @@ function ShootingStars() {
           state: null as StreakState | null,
         };
       }),
-    [],
+    [COUNT],
+  );
+
+  // Dispose on unmount
+  useEffect(
+    () => () => {
+      for (const e of entries) {
+        e.line.geometry.dispose();
+        (e.line.material as THREE.LineBasicMaterial).dispose();
+      }
+    },
+    [entries],
   );
 
   function spawnStreak(entry: (typeof entries)[0]) {
@@ -310,17 +339,18 @@ function ShootingStars() {
   return (
     <>
       <primitive object={entries[0].line} />
-      <primitive object={entries[1].line} />
-      <primitive object={entries[2].line} />
-      <primitive object={entries[3].line} />
-      <primitive object={entries[4].line} />
+      {entries[1] && <primitive object={entries[1].line} />}
+      {entries[2] && <primitive object={entries[2].line} />}
+      {entries[3] && <primitive object={entries[3].line} />}
+      {entries[4] && <primitive object={entries[4].line} />}
     </>
   );
 }
 
 function DustParticles() {
   const groupRef = useRef<THREE.Group>(null!);
-  const COUNT = 70;
+  const COUNT = IS_NARROW ? 30 : 50;
+
   const { geom, velocities } = useMemo(() => {
     const pos = new Float32Array(COUNT * 3);
     const vel = new Float32Array(COUNT * 3);
@@ -335,7 +365,7 @@ function DustParticles() {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
     return { geom: g, velocities: vel };
-  }, []);
+  }, [COUNT]);
 
   const mat = useMemo(
     () =>
@@ -349,6 +379,14 @@ function DustParticles() {
         blending: THREE.AdditiveBlending,
       }),
     [],
+  );
+
+  useEffect(
+    () => () => {
+      geom.dispose();
+      mat.dispose();
+    },
+    [geom, mat],
   );
 
   useFrame((_, delta) => {
@@ -380,10 +418,12 @@ function DustParticles() {
 }
 
 export default function SpaceBackground() {
+  // Star counts scaled down on narrow/mobile screens
+  const c = IS_NARROW ? 0.5 : 1;
   return (
     <>
       <StarLayer
-        count={700}
+        count={Math.round(700 * c)}
         rMin={58}
         rMax={80}
         size={0.022}
@@ -393,7 +433,7 @@ export default function SpaceBackground() {
         color="#c0d8ff"
       />
       <StarLayer
-        count={450}
+        count={Math.round(450 * c)}
         rMin={40}
         rMax={58}
         size={0.048}
@@ -403,7 +443,7 @@ export default function SpaceBackground() {
         color="#d4e8ff"
       />
       <StarLayer
-        count={180}
+        count={Math.round(180 * c)}
         rMin={26}
         rMax={40}
         size={0.09}
@@ -413,7 +453,7 @@ export default function SpaceBackground() {
         color="#ffffff"
       />
       <StarLayer
-        count={35}
+        count={Math.round(35 * c)}
         rMin={44}
         rMax={60}
         size={0.13}

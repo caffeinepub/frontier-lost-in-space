@@ -5,9 +5,13 @@
  * Forward-only/guarded: movement, scan, target, lock, fire
  *
  * Stuck recovery:
- *   - General guarded steps: STUCK_THRESHOLD_MS (18s)
- *   - "target" step specifically: 8s (more forgiving — iPhone touch is tricky)
+ *   - All guarded steps: 18s timeout → canSkipCurrentStep=true
+ *   - "target" step: 8s (more forgiving — iPhone touch is tricky)
  *   - After 3 target taps that don't advance: immediately show skip
+ *
+ * Exit guardrail:
+ *   - skipTutorial() now works at ANY time (no longer requires tutorialComplete)
+ *   - This ensures a player is never trapped behind the overlay
  */
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
@@ -34,15 +38,11 @@ const STEP_ORDER: TutorialStep[] = [
   "control_panel",
   "complete",
 ];
-
-// Steps where backward navigation is allowed
 const BACK_SAFE: Set<TutorialStep> = new Set([
   "intro",
   "radar",
   "control_panel",
 ]);
-
-// Guarded steps: stuck timer + skip allowed after timeout
 const GUARDED: Set<TutorialStep> = new Set([
   "movement",
   "scan",
@@ -50,25 +50,19 @@ const GUARDED: Set<TutorialStep> = new Set([
   "lock",
   "fire",
 ]);
-
-// Default time in ms before SKIP becomes available on a stuck guarded step
 const STUCK_THRESHOLD_MS = 18000;
-// Shorter threshold specifically for the "target" step (iPhone touch is unreliable)
 const TARGET_STUCK_THRESHOLD_MS = 8000;
-// After this many target tap attempts without advancing, show skip immediately
 const TARGET_TAP_BYPASS_COUNT = 3;
 
 function nextStep(current: TutorialStep): TutorialStep {
   const idx = STEP_ORDER.indexOf(current);
   return STEP_ORDER[Math.min(idx + 1, STEP_ORDER.length - 1)];
 }
-
 function prevStep(current: TutorialStep): TutorialStep {
   const idx = STEP_ORDER.indexOf(current);
   return STEP_ORDER[Math.max(idx - 1, 0)];
 }
 
-/** Unlock flags that are true when tutorial is complete or inactive */
 const ALL_UNLOCKED = {
   canMove: true,
   canScan: true,
@@ -101,10 +95,7 @@ interface TutorialState {
   currentStep: TutorialStep;
   stepStartedAt: number | null;
   canSkipCurrentStep: boolean;
-  /** Count of times setTargetDetected was called while on the target step */
   targetTapCount: number;
-
-  // Progressive unlock flags
   canMove: boolean;
   canScan: boolean;
   canTarget: boolean;
@@ -113,8 +104,6 @@ interface TutorialState {
   canUseRadar: boolean;
   canOpenPanel: boolean;
   fullUIUnlocked: boolean;
-
-  // Actions
   startTutorial: () => void;
   skipTutorial: () => void;
   advanceStep: () => void;
@@ -122,8 +111,6 @@ interface TutorialState {
   skipCurrentStep: () => void;
   completeTutorial: () => void;
   markStepStuck: () => void;
-
-  // Interaction detectors — called by game systems
   setMovementDetected: () => void;
   setScanDetected: () => void;
   setTargetDetected: () => void;
@@ -143,8 +130,6 @@ export const useTutorialStore = create<TutorialState>()(
       stepStartedAt: null,
       canSkipCurrentStep: false,
       targetTapCount: 0,
-
-      // All locks start open; will be constrained when tutorial starts
       ...ALL_UNLOCKED,
 
       startTutorial: () => {
@@ -159,14 +144,9 @@ export const useTutorialStore = create<TutorialState>()(
         });
       },
 
+      // GUARDRAIL: Exit is allowed at ANY time — player is never trapped
       skipTutorial: () => {
-        // Only allowed if already completed once
-        if (!get().tutorialComplete) return;
-        set({
-          tutorialActive: false,
-          tutorialSkipped: true,
-          ...ALL_UNLOCKED,
-        });
+        set({ tutorialActive: false, tutorialSkipped: true, ...ALL_UNLOCKED });
       },
 
       advanceStep: () => {
@@ -177,18 +157,18 @@ export const useTutorialStore = create<TutorialState>()(
           get().completeTutorial();
           return;
         }
+        const startedAt = Date.now();
         set({
           currentStep: step,
-          stepStartedAt: Date.now(),
+          stepStartedAt: startedAt,
           canSkipCurrentStep: false,
           targetTapCount: 0,
           ...unlocksForStep(step),
         });
-        // Start stuck timer for guarded steps
+        // GUARDRAIL: all guarded steps get a stuck timer
         if (GUARDED.has(step)) {
           const threshold =
             step === "target" ? TARGET_STUCK_THRESHOLD_MS : STUCK_THRESHOLD_MS;
-          const startedAt = Date.now();
           setTimeout(() => {
             const s = get();
             if (
@@ -204,7 +184,7 @@ export const useTutorialStore = create<TutorialState>()(
 
       goBack: () => {
         const current = get().currentStep;
-        if (!BACK_SAFE.has(current)) return; // guarded steps cannot go back
+        if (!BACK_SAFE.has(current)) return;
         const step = prevStep(current);
         if (step === current) return;
         set({
@@ -216,9 +196,10 @@ export const useTutorialStore = create<TutorialState>()(
         });
       },
 
+      // GUARDRAIL: skip is unlocked by stuck timer for every guarded step
       skipCurrentStep: () => {
         const current = get().currentStep;
-        if (!GUARDED.has(current)) return; // only guarded steps can be skipped
+        if (!GUARDED.has(current)) return;
         if (!get().canSkipCurrentStep) return;
         get().advanceStep();
       },
@@ -235,8 +216,7 @@ export const useTutorialStore = create<TutorialState>()(
       },
 
       markStepStuck: () => {
-        const current = get().currentStep;
-        if (GUARDED.has(current)) {
+        if (GUARDED.has(get().currentStep)) {
           set({ canSkipCurrentStep: true });
         }
       },
@@ -245,7 +225,6 @@ export const useTutorialStore = create<TutorialState>()(
         if (get().currentStep !== "movement") return;
         get().advanceStep();
       },
-
       setScanDetected: () => {
         if (get().currentStep !== "scan") return;
         get().advanceStep();
@@ -253,20 +232,13 @@ export const useTutorialStore = create<TutorialState>()(
 
       setTargetDetected: () => {
         const step = get().currentStep;
-
-        // Always increment tap counter regardless of current step
-        // so repeated taps on a stuck step eventually show the bypass
         if (step === "target") {
           const newCount = get().targetTapCount + 1;
           set({ targetTapCount: newCount });
-
-          // After N taps with no progress, show skip immediately
           if (newCount >= TARGET_TAP_BYPASS_COUNT) {
             set({ canSkipCurrentStep: true });
           }
-
-          get().advanceStep(); // -> lock
-          // Auto-advance lock -> fire after 2s
+          get().advanceStep();
           const lockStartedAt = Date.now();
           setTimeout(() => {
             const s = get();
@@ -279,23 +251,15 @@ export const useTutorialStore = create<TutorialState>()(
         }
       },
 
-      setLockDetected: () => {
-        // lock auto-advances; external callers can still call this safely
-      },
-
+      setLockDetected: () => {},
       setFireDetected: () => {
         if (get().currentStep !== "fire") return;
-        get().advanceStep(); // -> radar
-        // Auto-advance radar -> control_panel after 3s
+        get().advanceStep();
         setTimeout(() => {
           if (get().currentStep === "radar") get().advanceStep();
         }, 3000);
       },
-
-      setRadarObserved: () => {
-        // Handled by auto-advance timer in setFireDetected
-      },
-
+      setRadarObserved: () => {},
       setPanelOpened: () => {
         if (get().currentStep !== "control_panel") return;
         get().completeTutorial();
