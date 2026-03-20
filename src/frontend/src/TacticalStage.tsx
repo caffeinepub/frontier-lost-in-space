@@ -46,6 +46,7 @@ import TutorialOverlay from "./components/game/TutorialOverlay";
 import UpperCanopy from "./components/game/UpperCanopy";
 import VelocityIndicator from "./components/game/VelocityIndicator";
 import WeaponConsole from "./components/game/WeaponConsole";
+import WeaponHologramLayer from "./components/game/WeaponHologramLayer";
 import { useTacticalStore } from "./hooks/useTacticalStore";
 import { useIntroStore } from "./intro/useIntroStore";
 import { useShipMovementSetup } from "./motion/useShipMovementSetup";
@@ -290,8 +291,11 @@ export default function TacticalStage() {
         <PlayerHitFlash />
       </div>
 
-      {/* Cinematic AAA weapon console — replaces WeaponControlDeck */}
-      <WeaponConsole />
+      {/* Cinematic AAA weapon console + hologram overlay */}
+      <div style={{ position: "relative", width: "100%", flexShrink: 0 }}>
+        <WeaponHologramLayer />
+        <WeaponConsole />
+      </div>
 
       <BottomCommandNav />
 

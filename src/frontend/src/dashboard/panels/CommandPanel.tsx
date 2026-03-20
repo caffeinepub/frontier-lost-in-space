@@ -13,6 +13,26 @@ import { useTutorialStore } from "../../tutorial/useTutorialStore";
 
 const BUILD_NOTES = [
   {
+    version: "v13 — Weapon Console Cluster Layout",
+    items: [
+      "LEFT CLUSTER: Pulse Cannon + Heat Missile (unified housing)",
+      "CENTER: FIRE control (dominant focal point)",
+      "RIGHT CLUSTER: Rail Gun + EMP Burst (unified housing)",
+      "EMP Burst promoted to active loadout (4 active weapons)",
+      "WeaponCluster + WeaponSlot components replace flat row",
+    ],
+  },
+  {
+    version: "v13 — Weapon AI System",
+    items: [
+      "useWeaponAI.ts: target analysis engine",
+      "SAT targets → pulse/rail; BASE → rail/missile; THREAT → emp/pulse",
+      "Manual mode: shows recommendation badge only",
+      "Assisted mode: auto-arms recommended weapon on target lock",
+      "Toggle via AI/MANUAL indicator in console top-right",
+    ],
+  },
+  {
     version: "v5 — Structure Audit",
     items: [
       "Audited and reorganized all files by responsibility",

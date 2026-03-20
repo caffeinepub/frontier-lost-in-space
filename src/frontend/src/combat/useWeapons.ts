@@ -27,7 +27,7 @@ export interface Weapon {
   requiresLock?: boolean;
 }
 
-/** Active 3-slot loadout */
+/** Active 4-slot loadout */
 const INITIAL_WEAPONS: Weapon[] = [
   {
     id: "pulse",
@@ -67,10 +67,6 @@ const INITIAL_WEAPONS: Weapon[] = [
     glowColor: "rgba(255,100,68,0.4)",
     requiresLock: true,
   },
-];
-
-/** Inventory weapons (not in active slots — available for loadout swapping) */
-export const INVENTORY_WEAPONS: Weapon[] = [
   {
     id: "emp",
     name: "EMP BURST",
@@ -83,6 +79,9 @@ export const INVENTORY_WEAPONS: Weapon[] = [
     glowColor: "rgba(255,136,0,0.4)",
   },
 ];
+
+/** Inventory weapons (reserved for future loadout swapping) */
+export const INVENTORY_WEAPONS: Weapon[] = [];
 
 interface WeaponsStore {
   weapons: Weapon[];
