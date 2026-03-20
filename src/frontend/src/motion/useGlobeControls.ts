@@ -7,6 +7,7 @@ interface GlobeControlsState {
   elevation: number;
   radius: number;
   controlMode: ControlMode;
+  isUserControlling: boolean;
 }
 
 export interface GlobeControls extends GlobeControlsState {
@@ -20,16 +21,27 @@ export function useGlobeControls(): GlobeControls {
     elevation: 0.2,
     radius: 5.0,
     controlMode: "orbit",
+    isUserControlling: false,
   });
 
-  // Target values (smoothed toward each frame)
   const targetRef = useRef({ azimuth: 0, elevation: 0.2, radius: 5.0 });
   const dragRef = useRef({ active: false, lastX: 0, lastY: 0 });
   const touchRef = useRef({ active: false, lastX: 0, lastY: 0, dist: 0 });
   const modeRef = useRef<ControlMode>("orbit");
   const rafRef = useRef<number>(0);
+  const controllingRef = useRef(false);
+  const controlTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Damping loop
+  // Store markControlling in a ref so useEffect deps don't need it
+  const markControllingRef = useRef(() => {
+    controllingRef.current = true;
+    if (controlTimeoutRef.current) clearTimeout(controlTimeoutRef.current);
+    controlTimeoutRef.current = setTimeout(() => {
+      controllingRef.current = false;
+    }, 2000);
+  });
+
+  // Damping + auto-drift loop
   useEffect(() => {
     let current = { azimuth: 0, elevation: 0.2, radius: 5.0 };
     let running = true;
@@ -39,7 +51,11 @@ export function useGlobeControls(): GlobeControls {
       const t = targetRef.current;
       const factor = 0.08;
 
-      // Lerp azimuth with wrap-around
+      // Auto-drift when not user controlling
+      if (!controllingRef.current && modeRef.current === "orbit") {
+        targetRef.current.azimuth += 0.0003;
+      }
+
       let da = t.azimuth - current.azimuth;
       while (da > Math.PI) da -= Math.PI * 2;
       while (da < -Math.PI) da += Math.PI * 2;
@@ -53,6 +69,7 @@ export function useGlobeControls(): GlobeControls {
         elevation: current.elevation,
         radius: current.radius,
         controlMode: modeRef.current,
+        isUserControlling: controllingRef.current,
       });
 
       rafRef.current = requestAnimationFrame(loop);
@@ -67,8 +84,10 @@ export function useGlobeControls(): GlobeControls {
 
   // Mouse drag
   useEffect(() => {
+    const markControlling = markControllingRef.current;
     function onMouseDown(e: MouseEvent) {
       dragRef.current = { active: true, lastX: e.clientX, lastY: e.clientY };
+      markControlling();
     }
     function onMouseUp() {
       dragRef.current.active = false;
@@ -80,18 +99,20 @@ export function useGlobeControls(): GlobeControls {
       const dy = e.clientY - dragRef.current.lastY;
       dragRef.current.lastX = e.clientX;
       dragRef.current.lastY = e.clientY;
-      targetRef.current.azimuth -= dx * 0.008;
+      targetRef.current.azimuth += dx * 0.005;
       targetRef.current.elevation = Math.max(
         -1.2,
-        Math.min(1.2, targetRef.current.elevation + dy * 0.006),
+        Math.min(1.2, targetRef.current.elevation + dy * 0.004),
       );
+      markControlling();
     }
     function onWheel(e: WheelEvent) {
       e.preventDefault();
       targetRef.current.radius = Math.max(
-        3.0,
+        3.5,
         Math.min(8.0, targetRef.current.radius + e.deltaY * 0.005),
       );
+      markControlling();
     }
     document.addEventListener("mousedown", onMouseDown);
     document.addEventListener("mouseup", onMouseUp);
@@ -107,6 +128,8 @@ export function useGlobeControls(): GlobeControls {
 
   // Touch drag + pinch
   useEffect(() => {
+    const markControlling = markControllingRef.current;
+
     function getTouchDist(touches: TouchList): number {
       if (touches.length < 2) return 0;
       const dx = touches[0].clientX - touches[1].clientX;
@@ -125,6 +148,7 @@ export function useGlobeControls(): GlobeControls {
       } else if (e.touches.length === 2) {
         touchRef.current.dist = getTouchDist(e.touches);
       }
+      markControlling();
     }
     function onTouchEnd() {
       touchRef.current.active = false;
@@ -137,22 +161,24 @@ export function useGlobeControls(): GlobeControls {
         const dy = e.touches[0].clientY - touchRef.current.lastY;
         touchRef.current.lastX = e.touches[0].clientX;
         touchRef.current.lastY = e.touches[0].clientY;
-        targetRef.current.azimuth -= dx * 0.01;
+        targetRef.current.azimuth += dx * 0.006;
         targetRef.current.elevation = Math.max(
           -1.2,
-          Math.min(1.2, targetRef.current.elevation + dy * 0.008),
+          Math.min(1.2, targetRef.current.elevation + dy * 0.005),
         );
+        markControlling();
       } else if (e.touches.length === 2) {
         const dist = getTouchDist(e.touches);
         const prev = touchRef.current.dist;
         if (prev > 0) {
           const delta = prev - dist;
           targetRef.current.radius = Math.max(
-            3.0,
+            3.5,
             Math.min(8.0, targetRef.current.radius + delta * 0.01),
           );
         }
         touchRef.current.dist = dist;
+        markControlling();
       }
     }
 

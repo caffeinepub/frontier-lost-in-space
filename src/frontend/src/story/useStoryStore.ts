@@ -8,6 +8,7 @@
  */
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { interruptVoice } from "../systems/useAudioQueue";
 
 export type StoryPhase = 1 | 2 | 3 | 4 | 5 | 6;
 
@@ -274,6 +275,16 @@ interface StoryState {
   markFirstCombat: () => void;
 }
 
+const STORY_VOICE_MAP: Record<string, string> = {
+  p1_systems_damaged: "story_systems_damaged",
+  p1_oxygen_warning: "story_oxygen_critical",
+  p1_aegis_first_contact: "story_aegis_contact",
+  p1_hull_breach: "story_hull_breach",
+  p1_first_threat: "story_first_threat",
+  p1_survival_choice: "story_survival_choice",
+  p1_stabilized: "story_stabilized",
+};
+
 export const useStoryStore = create<StoryState>()(
   persist(
     (set, get) => ({
@@ -308,6 +319,9 @@ export const useStoryStore = create<StoryState>()(
           if (eventId === "p1_stabilized") {
             set({ phase1Complete: true });
           }
+          // Voice for auto-dismiss events
+          const autoVoiceKey = STORY_VOICE_MAP[eventId];
+          if (autoVoiceKey) interruptVoice(autoVoiceKey);
           return;
         }
         set((prev) => ({

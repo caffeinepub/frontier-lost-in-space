@@ -15,6 +15,7 @@
  */
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { enqueueVoice } from "../systems/useAudioQueue";
 
 export type TutorialStep =
   | "intro"
@@ -120,6 +121,18 @@ interface TutorialState {
   setPanelOpened: () => void;
 }
 
+const TUTORIAL_VOICE_MAP: Record<string, string> = {
+  intro: "tutorial_intro",
+  movement: "tutorial_movement",
+  scan: "tutorial_scan",
+  target: "tutorial_target",
+  lock: "tutorial_lock",
+  fire: "tutorial_fire",
+  radar: "tutorial_radar",
+  control_panel: "tutorial_control_panel",
+  complete: "tutorial_complete",
+};
+
 export const useTutorialStore = create<TutorialState>()(
   persist(
     (set, get) => ({
@@ -165,6 +178,9 @@ export const useTutorialStore = create<TutorialState>()(
           targetTapCount: 0,
           ...unlocksForStep(step),
         });
+        // Voice line for new step
+        const stepVoiceKey = TUTORIAL_VOICE_MAP[step];
+        if (stepVoiceKey) enqueueVoice(stepVoiceKey);
         // GUARDRAIL: all guarded steps get a stuck timer
         if (GUARDED.has(step)) {
           const threshold =

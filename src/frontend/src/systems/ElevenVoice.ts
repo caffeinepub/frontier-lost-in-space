@@ -182,16 +182,14 @@ export async function speakEleven(text: string): Promise<void> {
  * @param eventKey - Optional event key. If it matches a premium event,
  *                   ElevenLabs is used; otherwise browser TTS is used.
  */
-export function speakHybrid(text: string, eventKey?: string): void {
+export function speakHybrid(text: string, eventKey?: string): Promise<void> {
   if (eventKey && isPremiumEvent(eventKey)) {
-    // Fire-and-forget — never await in gameplay code
-    speakEleven(text).catch(() => {
-      // Belt-and-suspenders: fallback already handled inside speakEleven
+    return speakEleven(text).catch(() => {
       localSpeak(text);
     });
-  } else {
-    localSpeak(text);
   }
+  localSpeak(text);
+  return Promise.resolve();
 }
 
 /** Stop all voice output (both ElevenLabs and local). */

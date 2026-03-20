@@ -6,6 +6,7 @@
  * Both fire at the player at random 3–6 second intervals.
  */
 import { create } from "zustand";
+import { useCinematicStore } from "../systems/useCinematicStore";
 
 export type EnemyType = "satellite" | "base";
 export type EnemyStatus = "active" | "destroyed";
@@ -166,6 +167,9 @@ const ENEMY_WEAPON_DAMAGE: Record<string, number> = {
   missile: 0.8,
 };
 
+// Track whether the session intro cinematic has fired
+let _hostileContactFired = false;
+
 interface EnemyStore {
   enemies: EnemyTarget[];
   incoming: IncomingProjectile[];
@@ -174,6 +178,7 @@ interface EnemyStore {
   damageEnemy: (id: string, weaponType: string) => void;
   markProjectileHit: (projId: string) => void;
   removeExpired: () => void;
+  triggerSessionCinematic: () => void;
 }
 
 export const useEnemyStore = create<EnemyStore>((set, get) => ({
@@ -261,6 +266,23 @@ export const useEnemyStore = create<EnemyStore>((set, get) => ({
         p.id === projId ? { ...p, hit: true } : p,
       ),
     }));
+  },
+
+  triggerSessionCinematic: () => {
+    if (_hostileContactFired) return;
+    _hostileContactFired = true;
+    const enemies = get().enemies;
+    let firstId = "";
+    for (let i = 0; i < enemies.length; i++) {
+      if (enemies[i].type === "satellite") {
+        firstId = enemies[i].id;
+        break;
+      }
+    }
+    if (!firstId && enemies.length > 0) firstId = enemies[0].id;
+    setTimeout(() => {
+      useCinematicStore.getState().triggerHostileContact(firstId);
+    }, 1500);
   },
 
   removeExpired: () => {

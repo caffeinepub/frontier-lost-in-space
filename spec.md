@@ -1,33 +1,67 @@
 # Frontier - Lost In Space
 
 ## Current State
-WeaponConsole.tsx renders a bottom console using AI-generated JPEG/PNG image assets as the base layer (weapon-console-rebuilt-v2, pulse-panel, rail-panel, missile-panel, fire-idle/pressed). The animation state machine (useWeaponAnimState.ts) is solid and must be preserved unchanged. The console is mounted inside WeaponControlDeck.tsx or CombatLayer equivalent.
+
+The app is a React + Three.js spacecraft cockpit game with:
+- `systems/ElevenVoice.ts` — hybrid TTS router (ElevenLabs + browser TTS fallback). Graceful no-key fallback exists. No queue/priority/interrupt system.
+- `audio/aegisVoice.ts` — minimal browser TTS wrapper (unused path)
+- `alerts/useAlertsStore.ts` — alert/degradation system with templates. No voice calls.
+- `missions/useMissionsStore.ts` — mission/log/campaign store. No voice calls.
+- `story/useStoryStore.ts` — Phase 1 story events with A.E.G.I.S. dialogue. No voice calls.
+- `tutorial/useTutorialStore.ts` — step-based tutorial state machine. No voice calls.
+- `combat/useEnemyStore.ts` — satellite/base enemies, return fire, respawn. No cinematic triggers.
+- `intro/CinematicIntro.tsx` — existing 26s cinematic intro using `speakEleven`. Pattern reference.
+- No "Hostile Contact Detected" cinematic exists yet.
+- Standing rule: Zustand selectors must return stable references. No `.filter()` or `.map()` inside selectors.
 
 ## Requested Changes (Diff)
 
 ### Add
-- Pure CSS/Tailwind weapon system panel: no image assets, fully embedded into the console surface
-- LEFT panel: Pulse Cannon — energy bar (vertical or horizontal), 3 LED status indicators, label plate
-- RIGHT panel: Rail Gun — charge bar, heat indicator strip, label plate
-- CENTER: FIRE control housing (existing button logic preserved), clean housing surround
-- LOWER STRIP: Power | Heat | Target Lock | System indicators (5 nodes)
-- All panels get cyan glow on hover/lock, bronze label plates
+- `systems/useAudioQueue.ts` — audio queue store with priority, interrupt handling, and per-category locks
+- `systems/aegisVoiceLines.ts` — centralized A.E.G.I.S. voice line registry (all trigger keys + text strings)
+- `components/cinematics/HostileContactCinematic.tsx` — "Hostile Contact Detected" cinematic: camera push-in via CSS transform, UI intensity change, target emphasis overlay, voice line, auto-returns to gameplay in 3–8s
+- Wire voice trigger in `useAlertsStore.ts` — on `triggerAlert` and `resolveAlert`
+- Wire voice trigger in `useMissionsStore.ts` — on `completeMission` and mission start
+- Wire voice trigger in `useStoryStore.ts` — on each Phase 1 event trigger
+- Wire voice trigger in `useTutorialStore.ts` — on each step advance
+- Wire hostile contact cinematic in `useEnemyStore.ts` — on first enemy spawn / respawn wave
+- Mount `HostileContactCinematic` in `TacticalStage.tsx`
 
 ### Modify
-- WeaponConsole.tsx: replace image-asset base layer with CSS-drawn console surface; keep all animation state machine wiring (useWeaponAnimState, useCombatState, useWeapons, usePlayerStore)
-- Remove all <img> tags referencing ASSETS object (base, pulsePanel, railPanel, fireIdle, firePressed, missilePanel)
-- Keep all keyframe animations, ANIM_TOKENS usage, WeaponPanel, FireButton, CooldownStrip, StatusStrip components
+- `systems/ElevenVoice.ts` — integrate with `useAudioQueue` for queue/priority/interrupt; keep all existing fallback logic intact
+- `systems/useShipSystemsStore.ts` — add voice call on critical subsystem degradation (if not already present)
 
 ### Remove
-- ASSETS object and all image references
-- MissilePanel image layer (replace with a small text indicator in lower strip)
-- Globe/planet references (none exist here, keep it that way)
+- Nothing removed. `audio/aegisVoice.ts` kept as-is (legacy path, not breaking anything).
 
 ## Implementation Plan
-1. Rewrite WeaponConsole.tsx base surface as dark brushed-metal CSS panel (dark gradient + subtle grid lines)
-2. LEFT panel (Pulse Cannon): dark recessed housing, vertical energy bar with cyan fill, 3 LED dots, bronze label plate, edge glow on active states
-3. CENTER: FIRE housing — circular button with red core, glass highlight, housing ring, existing click/state logic
-4. RIGHT panel (Rail Gun): dark housing, charge bar segmented, heat strip (amber/red), bronze label plate
-5. LOWER STRIP: 5 horizontal indicator nodes — POWER (green), HEAT (amber), TARGET LOCK (cyan/red), SHIELD (blue), SYS READY (green) — each with icon char + label + dot
-6. Preserve all animation states: idle pulse, hover brighten, lock signal line, fire burst, cooldown refill, disabled dim
-7. Validate build passes
+
+1. **`systems/aegisVoiceLines.ts`** — registry of all trigger keys mapped to voice line text. Categories: `alert`, `mission`, `story`, `tutorial`, `combat`, `cinematic`. Includes `hostile_contact_detected` key.
+
+2. **`systems/useAudioQueue.ts`** — Zustand store:
+   - Queue of `{ id, text, eventKey, priority, interruptible }` items
+   - Priority levels: `CRITICAL=4`, `HIGH=3`, `NORMAL=2`, `LOW=1`
+   - `enqueue(item)` — inserts by priority, dedupes by eventKey
+   - `interrupt(item)` — stops current, plays immediately
+   - `processNext()` — pops highest priority item, calls `speakHybrid`, marks playing
+   - `onVoiceComplete()` — advances queue
+   - No `.filter()` or `.map()` in selectors
+
+3. **`systems/ElevenVoice.ts`** — replace direct `speakHybrid` calls in stores with `enqueue`/`interrupt` from the queue. Keep ElevenLabs fetch + fallback logic unchanged.
+
+4. **Store wiring (alerts/missions/story/tutorial)** — each store action that should trigger voice calls `enqueueVoice(eventKey, text, priority)` after its state mutation. Never inside selectors.
+
+5. **`components/cinematics/HostileContactCinematic.tsx`**:
+   - Triggered by `useCinematicStore` flag `hostileContactActive`
+   - Renders as `position: absolute` overlay inside existing viewport (no viewport takeover)
+   - Phase 1 (0–0.5s): target highlight ring appears on active enemy position
+   - Phase 2 (0.5–2s): viewport container gets a subtle scale(1.04) + translateY(-8px) push-in via CSS transition
+   - Phase 3 (0.5s): UI intensity boost — alert bar glows brighter, reticle sharpens, vignette deepens
+   - Phase 4 (1s): A.E.G.I.S. voice line fires via `interrupt()` — "Hostile contact detected. Weapons free."
+   - Phase 5 (3–5s): camera eases back to normal transform
+   - Phase 6 (5–8s): cinematic flag clears, full player control restored
+   - Returns cleanup function on unmount
+
+6. **`useEnemyStore.ts`** — on first satellite activation (session start) and on enemy respawn wave, set `hostileContactActive = true` in cinematic store.
+
+7. **`TacticalStage.tsx`** — mount `<HostileContactCinematic />` inside the viewport container. Apply camera transform to viewport wrapper div based on cinematic store state.

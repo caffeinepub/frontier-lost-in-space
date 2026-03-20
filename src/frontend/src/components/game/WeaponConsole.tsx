@@ -6,12 +6,14 @@
  *     Pulse Cannon       (dominant)       Rail Gun
  *     Heat Missile                        EMP Burst
  *
- * Each cluster is a single unified housing — not separate cards.
- * Only lighting, indicators, bars, and button behavior change between states.
- * Mobile-first. Zero 3D / globe visuals.
+ * V15 change: FIRE button now auto-acquires the nearest active enemy
+ * when no target is already selected. The button is always tappable;
+ * it either fires at the current target or snaps to the nearest threat
+ * and fires in one press.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useCombatState } from "../../combat/useCombatState";
+import { useEnemyStore } from "../../combat/useEnemyStore";
 import { usePlayerStore } from "../../combat/usePlayerStore";
 import { type AiMode, useWeaponAI } from "../../combat/useWeaponAI";
 import {
@@ -25,7 +27,7 @@ import type { Weapon } from "../../combat/useWeapons";
 import { useTacticalStore } from "../../hooks/useTacticalStore";
 import { useTutorialStore } from "../../tutorial/useTutorialStore";
 
-// ─── Utility helpers ──────────────────────────────────────────────────────────
+// ─── Utility helpers ──────────────────────────────────────────────────────────────
 function cooldownFraction(w: Weapon): number {
   if (w.status === "RELOADING") return w.reloadProgress ?? 0;
   if (w.status === "COOLDOWN") return 1 - (w.currentCooldown ?? 0);
@@ -35,7 +37,7 @@ function weaponReady(w: Weapon): boolean {
   return w.status === "READY" && (w.ammo === undefined || w.ammo > 0);
 }
 
-// ─── CSS keyframes ────────────────────────────────────────────────────────────
+// ─── CSS keyframes ────────────────────────────────────────────────────────────────
 const KEYFRAMES = `
   @keyframes wc-idle-glow {
     0%, 100% { opacity: 0.7; }
@@ -129,10 +131,10 @@ const KEYFRAMES = `
     to   { opacity: 1;   }
   }
   @keyframes ai-badge-pulse {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.05); opacity: 0.8; }
-}
-@keyframes cluster-pulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.05); opacity: 0.8; }
+  }
+  @keyframes cluster-pulse {
     0%, 100% { opacity: 0.85; }
     50%       { opacity: 1; }
   }
@@ -140,9 +142,13 @@ const KEYFRAMES = `
     0%, 100% { opacity: 0.6; }
     50%       { opacity: 1; }
   }
+  @keyframes acquire-flash {
+    0%   { opacity: 1; }
+    100% { opacity: 0; }
+  }
 `;
 
-// ─── Screw detail ─────────────────────────────────────────────────────────────
+// ─── Screw detail ─────────────────────────────────────────────────────────────────
 function Screw() {
   return (
     <div
@@ -161,7 +167,7 @@ function Screw() {
   );
 }
 
-// ─── Bronze engraved label plate ──────────────────────────────────────────────
+// ─── Bronze engraved label plate ─────────────────────────────────────────────────────
 function LabelPlate({
   label,
   animState,
@@ -207,7 +213,7 @@ function LabelPlate({
   );
 }
 
-// ─── Cooldown progress bar ─────────────────────────────────────────────────────
+// ─── Cooldown progress bar ───────────────────────────────────────────────────────────────
 function CooldownStrip({
   fraction,
   color,
@@ -262,11 +268,7 @@ function CooldownStrip({
   );
 }
 
-// ─── Compact weapon slot (inside cluster) ─────────────────────────────────────
-/**
- * A single weapon station inside the cluster housing.
- * Background is transparent — the cluster housing provides the surface.
- */
+// ─── Compact weapon slot (inside cluster) ───────────────────────────────────────────────
 function WeaponSlot({
   weapon,
   isPrimary,
@@ -309,7 +311,6 @@ function WeaponSlot({
   const ready = weaponReady(weapon);
   const fraction = cooldownFraction(weapon);
 
-  // Per-weapon accent color
   const accentColor =
     weapon.type === "pulse"
       ? "#00ffcc"
@@ -317,7 +318,7 @@ function WeaponSlot({
         ? "#44aaff"
         : weapon.type === "missile"
           ? "#ff6644"
-          : "#ff8800"; // emp
+          : "#ff8800";
 
   const statusDotColor =
     animState === "cooldown"
@@ -374,7 +375,6 @@ function WeaponSlot({
             : undefined,
       }}
     >
-      {/* Discharge flash (fire state) */}
       {animState === "fire" && (
         <div
           style={{
@@ -388,7 +388,6 @@ function WeaponSlot({
         />
       )}
 
-      {/* AI recommendation badge */}
       {isRecommended && (
         <span
           style={{
@@ -412,7 +411,6 @@ function WeaponSlot({
         </span>
       )}
 
-      {/* Top row: label + status dot */}
       <div
         style={{
           display: "flex",
@@ -446,8 +444,6 @@ function WeaponSlot({
         >
           {weapon.name}
         </span>
-
-        {/* Status dot */}
         <div
           style={{
             width: 5,
@@ -471,7 +467,6 @@ function WeaponSlot({
         />
       </div>
 
-      {/* Middle: weapon-specific charge indicator */}
       <WeaponSlotMeter
         weapon={weapon}
         fraction={fraction}
@@ -479,7 +474,6 @@ function WeaponSlot({
         accentColor={accentColor}
       />
 
-      {/* Readiness underline (hover/lock) */}
       {tokens.readyBarVisible && (
         <div
           style={{
@@ -493,7 +487,6 @@ function WeaponSlot({
         />
       )}
 
-      {/* Bottom progress bar — 2px, fills during cooldown refill */}
       <CooldownStrip
         fraction={fraction}
         color={accentColor}
@@ -505,7 +498,7 @@ function WeaponSlot({
   );
 }
 
-// ─── Per-weapon meter inside slot ─────────────────────────────────────────────
+// ─── Per-weapon meter ───────────────────────────────────────────────────────────────────────
 function WeaponSlotMeter({
   weapon,
   fraction,
@@ -518,7 +511,6 @@ function WeaponSlotMeter({
   accentColor: string;
 }) {
   if (weapon.type === "pulse") {
-    // Vertical energy bar (compact)
     const fillColor = animState === "cooldown" ? "#ffaa00" : accentColor;
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -560,7 +552,6 @@ function WeaponSlotMeter({
   }
 
   if (weapon.type === "railgun") {
-    // Segmented charge bar (compact, 5 segs)
     const segments = 5;
     const filled = Math.round(fraction * segments);
     const isHeat = animState === "cooldown";
@@ -614,7 +605,6 @@ function WeaponSlotMeter({
   }
 
   if (weapon.type === "missile") {
-    // Missile count dots
     const total = 4;
     const active = weaponReady(weapon)
       ? total
@@ -642,7 +632,6 @@ function WeaponSlotMeter({
     );
   }
 
-  // EMP — radial charge ring (compact)
   const isCharging = animState === "cooldown";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -690,7 +679,7 @@ function WeaponSlotMeter({
   );
 }
 
-// ─── Weapon cluster (unified housing for 2 weapons) ───────────────────────────
+// ─── Weapon cluster ─────────────────────────────────────────────────────────────────────
 function WeaponCluster({
   topWeapon,
   bottomWeapon,
@@ -720,7 +709,6 @@ function WeaponCluster({
   const topHovered = hoveredId === topWeapon.id;
   const bottomHovered = hoveredId === bottomWeapon.id;
 
-  // Cluster activates when any weapon inside is selected/hovered/firing
   const clusterActive =
     topSelected ||
     bottomSelected ||
@@ -747,12 +735,10 @@ function WeaponCluster({
         overflow: "hidden",
         transition: "box-shadow 200ms ease",
         position: "relative",
-        // Scan-line texture
         backgroundImage:
           "linear-gradient(180deg, #080c10 0%, #0a0f14 100%), repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,200,180,0.012) 3px, rgba(0,200,180,0.012) 4px)",
       }}
     >
-      {/* Top weapon slot (primary — 55%) */}
       <WeaponSlot
         weapon={topWeapon}
         isPrimary
@@ -763,8 +749,6 @@ function WeaponCluster({
         onFire={() => onFire(topWeapon.id)}
         isRecommended={recommendedWeaponId === topWeapon.id}
       />
-
-      {/* Internal seam divider */}
       <div
         style={{
           height: 1,
@@ -774,8 +758,6 @@ function WeaponCluster({
           margin: "0 6px",
         }}
       />
-
-      {/* Bottom weapon slot (secondary — 45%) */}
       <WeaponSlot
         weapon={bottomWeapon}
         isPrimary={false}
@@ -786,8 +768,6 @@ function WeaponCluster({
         onFire={() => onFire(bottomWeapon.id)}
         isRecommended={recommendedWeaponId === bottomWeapon.id}
       />
-
-      {/* Cluster label plate */}
       <div
         style={{
           background:
@@ -819,7 +799,7 @@ function WeaponCluster({
   );
 }
 
-// ─── Lock signal path ─────────────────────────────────────────────────────────
+// ─── Lock signal path ──────────────────────────────────────────────────────────────────
 function LockSignalLine({
   side,
   visible,
@@ -846,19 +826,27 @@ function LockSignalLine({
   );
 }
 
-// ─── Center FIRE button ────────────────────────────────────────────────────────
+// ─── Center FIRE button ───────────────────────────────────────────────────────────────────
+//
+// V15: The button now accepts an `onAutoAcquireAndFire` callback.
+// When pressed with no target locked, it auto-acquires the nearest active
+// enemy, sets it as the tactical node, and fires in a single press.
+// The button is NEVER disabled due to missing target — it always responds.
 function FireButton({
   hasTarget,
   onFire,
+  onAutoAcquireAndFire,
   selectedWeaponStatus,
 }: {
   hasTarget: boolean;
   onFire: () => void;
+  onAutoAcquireAndFire: () => void;
   selectedWeaponStatus: string;
 }) {
   const firingEffect = useCombatState((s) => s.firingEffect);
   const [pressed, setPressed] = useState(false);
   const [flash, setFlash] = useState(false);
+  const [acquiring, setAcquiring] = useState(false);
   const isFiring = !!firingEffect;
   const isCooldown =
     selectedWeaponStatus === "COOLDOWN" || selectedWeaponStatus === "RELOADING";
@@ -868,14 +856,21 @@ function FireButton({
   ) as WeaponAnimState;
 
   const handleFire = useCallback(() => {
-    if (!hasTarget || isCooldown) return;
+    if (isCooldown) return;
     setPressed(true);
     setFlash(true);
-    onFire();
+    if (hasTarget) {
+      onFire();
+    } else {
+      // Auto-acquire nearest enemy then fire
+      setAcquiring(true);
+      onAutoAcquireAndFire();
+      setTimeout(() => setAcquiring(false), 500);
+    }
     useTutorialStore.getState().setFireDetected();
     setTimeout(() => setPressed(false), 220);
     setTimeout(() => setFlash(false), 280);
-  }, [hasTarget, isCooldown, onFire]);
+  }, [hasTarget, isCooldown, onFire, onAutoAcquireAndFire]);
 
   const glowAnim =
     fireAnimState === "fire"
@@ -887,13 +882,17 @@ function FireButton({
           : "wc-fire-breathe 3.2s ease-in-out infinite";
 
   const buttonBg =
-    fireAnimState === "disabled"
-      ? "radial-gradient(circle, #1a0800 0%, #0a0400 60%, #050200 100%)"
-      : fireAnimState === "cooldown"
-        ? "radial-gradient(circle, #661100 0%, #440800 60%, #1a0400 100%)"
-        : pressed
-          ? "radial-gradient(circle, #ff2200 0%, #aa1100 60%, #330500 100%)"
-          : "radial-gradient(circle, #cc2200 0%, #880000 60%, #220000 100%)";
+    fireAnimState === "cooldown"
+      ? "radial-gradient(circle, #661100 0%, #440800 60%, #1a0400 100%)"
+      : pressed
+        ? "radial-gradient(circle, #ff2200 0%, #aa1100 60%, #330500 100%)"
+        : "radial-gradient(circle, #cc2200 0%, #880000 60%, #220000 100%)";
+
+  const statusLabel = acquiring
+    ? "ACQUIRING"
+    : hasTarget
+      ? "TGT LOCK"
+      : "AUTO-ACQ";
 
   return (
     <div
@@ -912,13 +911,17 @@ function FireButton({
         boxShadow: "inset 0 0 12px rgba(0,0,0,0.6)",
       }}
     >
-      {/* Target lock label */}
+      {/* Status label */}
       <div
         style={{
           fontFamily: "monospace",
           fontSize: 7,
           letterSpacing: "0.2em",
-          color: hasTarget ? "rgba(255,80,40,0.9)" : "rgba(120,80,60,0.5)",
+          color: hasTarget
+            ? "rgba(255,80,40,0.9)"
+            : acquiring
+              ? "rgba(255,200,0,0.9)"
+              : "rgba(160,120,80,0.65)",
           textShadow: hasTarget ? "0 0 8px rgba(255,60,0,0.7)" : "none",
           fontWeight: 700,
           textAlign: "center",
@@ -930,7 +933,7 @@ function FireButton({
           transition: "color 0.2s ease",
         }}
       >
-        {hasTarget ? "TGT LOCK" : "NO TGT"}
+        {statusLabel}
       </div>
 
       {/* Housing ring */}
@@ -962,6 +965,22 @@ function FireButton({
           />
         )}
 
+        {/* Acquire flash (cyan) — shown when auto-acquiring */}
+        {acquiring && (
+          <div
+            style={{
+              position: "absolute",
+              inset: -12,
+              borderRadius: "50%",
+              background:
+                "radial-gradient(circle, rgba(0,200,255,0.35) 0%, transparent 70%)",
+              pointerEvents: "none",
+              animation: "acquire-flash 0.5s ease-out forwards",
+              zIndex: 10,
+            }}
+          />
+        )}
+
         <button
           type="button"
           onClick={handleFire}
@@ -970,14 +989,14 @@ function FireButton({
           }}
           data-ocid="console.fire_button"
           aria-label={`FIRE — ${fireAnimState}`}
-          disabled={!hasTarget || isCooldown || fireAnimState === "disabled"}
+          disabled={isCooldown}
           style={{
             width: 68,
             height: 68,
             borderRadius: "50%",
             background: buttonBg,
             border: "none",
-            cursor: !hasTarget || isCooldown ? "not-allowed" : "pointer",
+            cursor: isCooldown ? "not-allowed" : "pointer",
             outline: "none",
             WebkitTapHighlightColor: "transparent",
             position: "relative",
@@ -1002,7 +1021,6 @@ function FireButton({
               transform: "rotate(-12deg)",
             }}
           />
-          {/* Internal radial glow */}
           <div
             style={{
               position: "absolute",
@@ -1013,7 +1031,6 @@ function FireButton({
               transition: "background 0.15s ease",
             }}
           />
-          {/* FIRE label */}
           <span
             style={{
               position: "absolute",
@@ -1025,10 +1042,9 @@ function FireButton({
               fontSize: 9,
               fontWeight: 900,
               letterSpacing: "0.14em",
-              color:
-                fireAnimState === "disabled"
-                  ? "rgba(100,30,20,0.4)"
-                  : "rgba(255,180,160,0.85)",
+              color: isCooldown
+                ? "rgba(100,30,20,0.4)"
+                : "rgba(255,180,160,0.85)",
               textShadow:
                 fireAnimState === "idle" || fireAnimState === "lock"
                   ? "0 0 8px rgba(255,80,40,0.8)"
@@ -1041,7 +1057,7 @@ function FireButton({
         </button>
       </div>
 
-      {/* Status dots row */}
+      {/* Status dots */}
       <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
         {[0, 1, 2, 3, 4].map((i) => (
           <div
@@ -1052,7 +1068,9 @@ function FireButton({
               borderRadius: "50%",
               background: hasTarget
                 ? "rgba(255,60,0,0.8)"
-                : "rgba(60,20,20,0.6)",
+                : acquiring
+                  ? "rgba(0,200,255,0.8)"
+                  : "rgba(60,20,20,0.6)",
               boxShadow: hasTarget ? "0 0 4px rgba(255,40,0,0.8)" : "none",
               animation: hasTarget
                 ? `fire-dot-blink 0.8s ${i * 0.12}s ease-in-out infinite alternate`
@@ -1063,13 +1081,12 @@ function FireButton({
         ))}
       </div>
 
-      {/* FIRE CONTROL label plate */}
       <LabelPlate label="FIRE CTRL" animState={fireAnimState} />
     </div>
   );
 }
 
-// ─── Lower status strip ───────────────────────────────────────────────────────
+// ─── Status strip ───────────────────────────────────────────────────────────────────────
 function StatusStrip({
   hasTarget,
   isFiring,
@@ -1084,7 +1101,6 @@ function StatusStrip({
   empWeapon?: Weapon;
 }) {
   const shield = usePlayerStore((s) => s.shield);
-
   const [heatPct, setHeatPct] = useState(0);
   const [powerPct, setPowerPct] = useState(100);
   const heatRef = useRef(heatPct);
@@ -1116,6 +1132,14 @@ function StatusStrip({
     alignItems: "center",
     gap: 3,
   };
+  const heatWarning = heatPct > 65;
+  const mslReady = missileWeapon ? weaponReady(missileWeapon) : false;
+  const mslFraction = missileWeapon ? cooldownFraction(missileWeapon) : 0;
+  const totalMissiles = 4;
+  const activeMissiles = mslReady
+    ? totalMissiles
+    : Math.round(mslFraction * totalMissiles);
+  const empReady = empWeapon ? weaponReady(empWeapon) : false;
 
   function StripLabel({ label }: { label: string }) {
     return (
@@ -1132,7 +1156,6 @@ function StatusStrip({
       </span>
     );
   }
-
   function StripBar({
     value,
     color,
@@ -1163,24 +1186,18 @@ function StatusStrip({
             background: barColor,
             boxShadow: `0 0 3px ${barColor}`,
             borderRadius: 2,
-            transition: "width 0.4s ease, background 0.3s ease",
+            transition: "width 0.4s ease",
           }}
         />
       </div>
     );
   }
-
   function StripDot({
     on,
     color,
     blink,
     anim,
-  }: {
-    on: boolean;
-    color: string;
-    blink?: boolean;
-    anim?: string;
-  }) {
+  }: { on: boolean; color: string; blink?: boolean; anim?: string }) {
     return (
       <div
         style={{
@@ -1199,18 +1216,6 @@ function StatusStrip({
       />
     );
   }
-
-  const heatWarning = heatPct > 65;
-
-  const mslReady = missileWeapon ? weaponReady(missileWeapon) : false;
-  const mslFraction = missileWeapon ? cooldownFraction(missileWeapon) : 0;
-  const totalMissiles = 4;
-  const activeMissiles = mslReady
-    ? totalMissiles
-    : Math.round(mslFraction * totalMissiles);
-
-  const empReady = empWeapon ? weaponReady(empWeapon) : false;
-
   const Divider = () => (
     <div
       style={{
@@ -1237,7 +1242,6 @@ function StatusStrip({
         rowGap: 4,
       }}
     >
-      {/* POWER */}
       <div style={indicatorBase}>
         <StripLabel label="PWR" />
         <StripBar
@@ -1252,10 +1256,7 @@ function StatusStrip({
           anim="wc-strip-glow 2.5s ease-in-out infinite"
         />
       </div>
-
       <Divider />
-
-      {/* HEAT */}
       <div style={indicatorBase}>
         <StripLabel label="HEAT" />
         <StripBar
@@ -1275,10 +1276,7 @@ function StatusStrip({
           }
         />
       </div>
-
       <Divider />
-
-      {/* TARGET LOCK */}
       <div style={indicatorBase}>
         <StripLabel label="LOCK" />
         <StripDot
@@ -1290,10 +1288,7 @@ function StatusStrip({
           }
         />
       </div>
-
       <Divider />
-
-      {/* SHIELD LINK */}
       <div style={indicatorBase}>
         <StripLabel label="SHLD" />
         <StripBar
@@ -1307,14 +1302,11 @@ function StatusStrip({
           color={shield > 50 ? "#00aaff" : shield > 20 ? "#ffaa00" : "#ff4400"}
         />
       </div>
-
       <Divider />
-
-      {/* MSL */}
       <div style={indicatorBase}>
         <StripLabel label="MSL" />
         <div style={{ display: "flex", gap: 2 }}>
-          {Array.from({ length: totalMissiles }, (_, i) => (
+          {Array.from({ length: totalMissiles }, (_m, i) => (
             <div
               // biome-ignore lint/suspicious/noArrayIndexKey: positional
               key={i}
@@ -1326,21 +1318,14 @@ function StatusStrip({
                   i < activeMissiles ? "#ff6644" : "rgba(40,10,0,0.5)",
                 boxShadow:
                   i < activeMissiles ? "0 0 3px rgba(255,100,68,0.7)" : "none",
-                border: `1px solid ${
-                  i < activeMissiles
-                    ? "rgba(255,100,68,0.4)"
-                    : "rgba(60,20,0,0.3)"
-                }`,
+                border: `1px solid ${i < activeMissiles ? "rgba(255,100,68,0.4)" : "rgba(60,20,0,0.3)"}`,
                 transition: "all 0.6s steps(4)",
               }}
             />
           ))}
         </div>
       </div>
-
       <Divider />
-
-      {/* EMP */}
       <div style={indicatorBase}>
         <StripLabel label="EMP" />
         <StripDot
@@ -1349,10 +1334,7 @@ function StatusStrip({
           anim="emp-charge 2.2s ease-in-out infinite"
         />
       </div>
-
       <Divider />
-
-      {/* READY */}
       <div style={indicatorBase}>
         <StripLabel label="RDY" />
         <StripDot
@@ -1365,7 +1347,7 @@ function StatusStrip({
   );
 }
 
-// ─── Main WeaponConsole ────────────────────────────────────────────────────────
+// ─── Main WeaponConsole ───────────────────────────────────────────────────────────────────
 export default function WeaponConsole() {
   const weapons = useWeaponsStore((s) => s.weapons);
   const selectedWeaponId = useWeaponsStore((s) => s.selectedWeaponId);
@@ -1373,7 +1355,9 @@ export default function WeaponConsole() {
   const fire = useWeaponsStore((s) => s.fire);
   const fireSelected = useWeaponsStore((s) => s.fireSelected);
   const selectedNode = useTacticalStore((s) => s.selectedNode);
+  const selectNode = useTacticalStore((s) => s.selectNode);
   const firingEffect = useCombatState((s) => s.firingEffect);
+  const enemies = useEnemyStore((s) => s.enemies);
   const hasTarget = !!selectedNode;
 
   const pulseWeapon = weapons.find((w) => w.type === "pulse");
@@ -1388,12 +1372,10 @@ export default function WeaponConsole() {
     selectedWeapon?.status === "RELOADING" ||
     false;
 
-  // Weapon AI
   const recommendedWeaponId = useWeaponAI((s) => s.recommendedWeaponId);
   const aiMode = useWeaponAI((s) => s.aiMode);
   const setAiMode = useWeaponAI((s) => s.setAiMode);
 
-  // Left cluster: pulse, missile. Right cluster: rail, emp.
   const selectedPanelSide: "left" | "right" | null =
     selectedWeaponId === "pulse" || selectedWeaponId === "missile"
       ? "left"
@@ -1406,6 +1388,33 @@ export default function WeaponConsole() {
     hasTarget &&
     selectedWeapon?.status === "READY" &&
     !isFiring;
+
+  /**
+   * Auto-acquire nearest active enemy and fire.
+   * Called when FIRE is pressed with no target selected.
+   */
+  const handleAutoAcquireAndFire = useCallback(() => {
+    const active = enemies.filter((e) => e.status === "active");
+    if (active.length === 0) {
+      // No enemies — fire toward centre anyway
+      fireSelected();
+      return;
+    }
+    // Pick the nearest enemy by world-space distance from origin
+    const nearest = active.reduce((best, e) => {
+      const d = Math.sqrt(e.px * e.px + e.py * e.py + e.pz * e.pz);
+      const bd = Math.sqrt(
+        best.px * best.px + best.py * best.py + best.pz * best.pz,
+      );
+      return d < bd ? e : best;
+    });
+    console.log("[FIRE] Auto-acquiring:", nearest.id, nearest.label);
+    selectNode(nearest.id);
+    // Give React one tick to update hasTarget, then fire
+    setTimeout(() => {
+      useWeaponsStore.getState().fireSelected();
+    }, 50);
+  }, [enemies, fireSelected, selectNode]);
 
   return (
     <>
@@ -1424,7 +1433,7 @@ export default function WeaponConsole() {
             "0 0 12px rgba(0,200,180,0.08), inset 0 1px 0 rgba(0,200,180,0.06)",
         }}
       >
-        {/* AI MODE indicator */}
+        {/* AI MODE toggle */}
         <button
           type="button"
           data-ocid="console.ai_mode_toggle"
@@ -1454,14 +1463,14 @@ export default function WeaponConsole() {
               fontWeight: 700,
               color: aiMode === "assisted" ? "#00ff88" : "rgba(0,180,200,0.45)",
               textShadow: aiMode === "assisted" ? "0 0 6px #00ff8866" : "none",
-              transition: "color 0.25s ease, text-shadow 0.25s ease",
+              transition: "color 0.25s ease",
             }}
           >
             {aiMode === "assisted" ? "AI ASSIST" : "MANUAL"}
           </span>
         </button>
 
-        {/* Top edge cyan glow strip */}
+        {/* Top edge glow */}
         <div
           style={{
             position: "absolute",
@@ -1477,8 +1486,7 @@ export default function WeaponConsole() {
             zIndex: 2,
           }}
         />
-
-        {/* Scan-line texture */}
+        {/* Scan-line */}
         <div
           style={{
             position: "absolute",
@@ -1489,8 +1497,7 @@ export default function WeaponConsole() {
             zIndex: 1,
           }}
         />
-
-        {/* FIRE recoil flash */}
+        {/* Recoil flash */}
         {isFiring && (
           <div
             style={{
@@ -1505,7 +1512,7 @@ export default function WeaponConsole() {
           />
         )}
 
-        {/* Main console row */}
+        {/* Console row */}
         <div
           style={{
             display: "flex",
@@ -1517,7 +1524,6 @@ export default function WeaponConsole() {
             minHeight: 110,
           }}
         >
-          {/* LEFT CLUSTER — Pulse Cannon (top) + Heat Missile (bottom) */}
           {pulseWeapon && missileWeapon ? (
             <WeaponCluster
               topWeapon={pulseWeapon}
@@ -1540,14 +1546,13 @@ export default function WeaponConsole() {
             />
           )}
 
-          {/* CENTER — FIRE control */}
           <FireButton
             hasTarget={hasTarget}
             onFire={fireSelected}
+            onAutoAcquireAndFire={handleAutoAcquireAndFire}
             selectedWeaponStatus={selectedWeapon?.status ?? "READY"}
           />
 
-          {/* RIGHT CLUSTER — Rail Gun (top) + EMP Burst (bottom) */}
           {railWeapon && empWeapon ? (
             <WeaponCluster
               topWeapon={railWeapon}
@@ -1570,13 +1575,11 @@ export default function WeaponConsole() {
             />
           )}
 
-          {/* Lock signal line overlay */}
           {showLockLine && selectedPanelSide && (
             <LockSignalLine side={selectedPanelSide} visible />
           )}
         </div>
 
-        {/* STATUS STRIP */}
         <StatusStrip
           hasTarget={hasTarget}
           isFiring={isFiring}
