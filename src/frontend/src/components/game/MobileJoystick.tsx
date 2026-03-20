@@ -8,7 +8,7 @@
  * New design:
  * - Small fixed-position widget (~88px diameter)
  * - Does NOT cover the globe area
- * - Uses IPFS controller image as visual base
+ * - Controller image removed (V22); clean dark circular base with cyan knob
  * - Fixed-origin interaction (widget center, not pointer start position)
  * - Dead zone of 8px to prevent drift
  * - Portrait: lower-left corner (above weapon console)
@@ -34,9 +34,6 @@ import { useTutorialStore } from "../../tutorial/useTutorialStore";
 const WIDGET_SIZE = 88; // px — total widget diameter
 const MAX_RADIUS = 36; // max knob travel from widget center
 const DEAD_ZONE_PX = 8; // below this, treat as zero input
-
-const CONTROLLER_IMAGE_URL =
-  "https://cyan-chemical-capybara-537.mypinata.cloud/ipfs/bafkreiegcewugfypi6eale3z6nraaxqm4tlqeuhckmm3skeaxaeujrd32a?pinataGatewayToken=7zglWYSGiMDzNDI6rKBp6n24Hn5dRANGNukXWHOraLmAUnl5cjJrHMrbnpJJJj2G";
 
 interface KnobState {
   knobDx: number; // offset from widget center in px
@@ -197,27 +194,7 @@ export default function MobileJoystick() {
         } as React.CSSProperties
       }
     >
-      {/* IPFS controller image — sits behind the active knob */}
-      <img
-        src={CONTROLLER_IMAGE_URL}
-        alt=""
-        aria-hidden
-        draggable={false}
-        style={{
-          width: 80,
-          height: 80,
-          borderRadius: "50%",
-          opacity: 0.65,
-          objectFit: "cover",
-          position: "absolute",
-          inset: 0,
-          pointerEvents: "none",
-          userSelect: "none",
-          WebkitUserSelect: "none",
-        }}
-      />
-
-      {/* Active knob — rendered on top of image when joystick is active */}
+      {/* Active knob — rendered when joystick is active */}
       {knob && (
         <div
           style={{

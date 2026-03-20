@@ -1,11 +1,21 @@
 import { Component, type ReactNode, useEffect, useRef, useState } from "react";
 import TacticalStage from "./TacticalStage";
+import IntroSequence from "./components/game/IntroSequence";
+import StartCampaignButton from "./components/ui/StartCampaignButton";
 import CinematicIntro from "./intro/CinematicIntro";
 import { useIntroStore } from "./intro/useIntroStore";
+import { useGameState } from "./state/useGameState";
+
+// Pre-computed star positions for the menu background (stable keys)
+const MENU_STARS = Array.from({ length: 120 }, (_, i) => ({
+  id: `s${i.toString().padStart(3, "0")}`,
+  cx: (i * 137.508) % 100,
+  cy: (i * 97.324) % 100,
+  r: (0.1 + ((i * 3.7) % 0.25)).toFixed(3),
+  opacity: (0.2 + ((i * 0.42) % 0.6)).toFixed(2),
+}));
 
 // ─── Root error boundary ──────────────────────────────────────────────────────
-// Catches any thrown error in TacticalStage or its subtree so a React crash
-// never leaves the user staring at a silent black page.
 interface EBState {
   hasError: boolean;
   message: string;
@@ -83,8 +93,7 @@ class GameRootErrorBoundary extends Component<
   }
 }
 
-// ─── Boot screen shown while zustand store is hydrating ───────────────────────
-// Prevents a blank frame being visible before the store resolves.
+// ─── Boot screen ──────────────────────────────────────────────────────────────
 function BootScreen() {
   return (
     <div
@@ -108,15 +117,39 @@ function BootScreen() {
   );
 }
 
+// ─── Debug mode badge ─────────────────────────────────────────────────────────
+function GameModeDebug({ mode }: { mode: string }) {
+  if (typeof localStorage === "undefined") return null;
+  if (localStorage.getItem("debug_gamemode") !== "1") return null;
+  return (
+    <div
+      style={{
+        position: "fixed",
+        top: 8,
+        left: 8,
+        fontFamily: "monospace",
+        fontSize: 10,
+        color: "rgba(0,220,255,0.5)",
+        background: "rgba(0,0,0,0.5)",
+        padding: "2px 6px",
+        borderRadius: 2,
+        pointerEvents: "none",
+        zIndex: 99999,
+        letterSpacing: "0.1em",
+      }}
+    >
+      [GAME MODE: {mode}]
+    </div>
+  );
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const introPlaying = useIntroStore((s) => s.introPlaying);
   const introComplete = useIntroStore((s) => s.introComplete);
   const initIntroGating = useIntroStore((s) => s.initIntroGating);
+  const mode = useGameState((s) => s.mode);
   const initRef = useRef(false);
-
-  // Track whether the intro store has been initialised yet.
-  // This prevents the 1-frame black flash before the useEffect fires.
   const [storeReady, setStoreReady] = useState(false);
 
   useEffect(() => {
@@ -127,7 +160,7 @@ export default function App() {
     initIntroGating();
     setStoreReady(true);
 
-    // Safety net: if after 600 ms neither flag is set, force to game
+    // Safety net: if after 600ms neither flag is set, force to game
     setTimeout(() => {
       const state = useIntroStore.getState();
       if (!state.introPlaying && !state.introComplete) {
@@ -137,7 +170,6 @@ export default function App() {
     }, 600);
   }, [initIntroGating]);
 
-  // Don't render anything until the effect has run (avoids blank 1st frame)
   if (!storeReady) return <BootScreen />;
 
   return (
@@ -169,14 +201,104 @@ export default function App() {
           position: "relative",
         }}
       >
+        {/* Existing CinematicIntro gate — preserved unchanged */}
         {introPlaying && <CinematicIntro />}
 
-        {!introPlaying && introComplete && (
-          <GameRootErrorBoundary>
-            <TacticalStage />
-          </GameRootErrorBoundary>
+        {/* Mode-based routing — only active when legacy intro is NOT playing */}
+        {!introPlaying && (
+          <>
+            {/* MENU — show title + START CAMPAIGN button */}
+            {mode === "menu" && (
+              <div
+                style={{
+                  position: "relative",
+                  width: "100%",
+                  height: "100dvh",
+                  background: "#000010",
+                }}
+              >
+                {/* Deep-space star field (lightweight SVG) */}
+                <svg
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    width: "100%",
+                    height: "100%",
+                    pointerEvents: "none",
+                  }}
+                  viewBox="0 0 100 100"
+                  preserveAspectRatio="xMidYMid slice"
+                >
+                  {MENU_STARS.map((s) => (
+                    <circle
+                      key={s.id}
+                      cx={s.cx}
+                      cy={s.cy}
+                      r={s.r}
+                      fill="white"
+                      opacity={s.opacity}
+                    />
+                  ))}
+                </svg>
+
+                {/* FRONTIER title */}
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "30%",
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    fontFamily: "monospace",
+                    color: "rgba(0,200,255,0.25)",
+                    letterSpacing: "0.5em",
+                    fontSize: "clamp(14px,2vw,22px)",
+                    whiteSpace: "nowrap",
+                    pointerEvents: "none",
+                  }}
+                >
+                  FRONTIER
+                </div>
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "calc(30% + 40px)",
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    fontFamily: "monospace",
+                    color: "rgba(0,150,200,0.15)",
+                    letterSpacing: "0.3em",
+                    fontSize: "clamp(8px,1vw,11px)",
+                    whiteSpace: "nowrap",
+                    pointerEvents: "none",
+                  }}
+                >
+                  LOST IN SPACE
+                </div>
+
+                <StartCampaignButton />
+              </div>
+            )}
+
+            {/* INTRO — placeholder sequence */}
+            {mode === "intro" && <IntroSequence />}
+
+            {/* GAME — full tactical stage (existing path) */}
+            {mode === "game" && (
+              <GameRootErrorBoundary>
+                <TacticalStage />
+              </GameRootErrorBoundary>
+            )}
+
+            {/* Returning player path: introComplete but still on menu → stay in menu */}
+            {/* When introComplete is true and mode hasn't been advanced yet, */}
+            {/* the player sees the menu as normal. */}
+            {introComplete && mode === "game" && null /* handled above */}
+          </>
         )}
       </div>
+
+      <GameModeDebug mode={mode} />
     </>
   );
 }

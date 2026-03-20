@@ -15,6 +15,10 @@
  *   - HUD overlay: added data-layer="hud-decoration" and reduced opacity 0.15→0.08.
  *     The generated HUD overlay contains scan lines. At 15% opacity with
  *     mixBlendMode:screen these appeared as additional stripes. Reduced.
+ * V20 (Nav Mode):
+ *   - NavigationModeHUD mounted in GlobeViewport (pointer-events:none overlay)
+ *   - globalNavMode initialized to orbitObservation on GameBootstrap
+ *   - Nav mode system sits ABOVE the interaction FSM; does NOT modify it
  */
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useRef, useState } from "react";
@@ -35,6 +39,7 @@ import { HudErrorBoundary } from "./components/game/HudErrorBoundary";
 import IncomingFireLayer from "./components/game/IncomingFireLayer";
 import InputLayerDebug from "./components/game/InputLayerDebug";
 import MobileJoystick from "./components/game/MobileJoystick";
+import NavigationModeHUD from "./components/game/NavigationModeHUD";
 import PlayerShieldHUD from "./components/game/PlayerShieldHUD";
 import PortraitCommandDrawer from "./components/game/PortraitCommandDrawer";
 import PortraitStatusBar from "./components/game/PortraitStatusBar";
@@ -49,12 +54,14 @@ import TutorialOverlay from "./components/game/TutorialOverlay";
 import UpperCanopy from "./components/game/UpperCanopy";
 import VelocityIndicator from "./components/game/VelocityIndicator";
 import WeaponConsole from "./components/game/WeaponConsole";
+import WeaponGhostLayer from "./components/game/WeaponGhostLayer";
 import WeaponHologramLayer from "./components/game/WeaponHologramLayer";
 import { useIsLandscape } from "./hooks/useIsLandscape";
 import { useTacticalStore } from "./hooks/useTacticalStore";
 import { runInteractionAssertions } from "./interaction/interactionAssertions";
 import { useIntroStore } from "./intro/useIntroStore";
 import { useShipMovementSetup } from "./motion/useShipMovementSetup";
+import { globalNavMode } from "./navigation/NavigationModeController";
 import { useShipSystemsStore } from "./systems/useShipSystemsStore";
 import { useTacticalLogStore } from "./tacticalLog/useTacticalLogStore";
 import { useTutorialStore } from "./tutorial/useTutorialStore";
@@ -108,6 +115,12 @@ function GameBootstrap() {
     add({ type: "system", message: "ALL SYSTEMS NOMINAL" });
     add({ type: "system", message: "ORBITAL THREATS DETECTED — ENGAGE" });
     useAlertsStore.getState().seedDegradationAlerts();
+
+    // Initialize navigation mode system
+    // globalNavMode starts at orbitObservation by default (no forceMode needed)
+    console.log(
+      `[NAV-MODE] Session initialized — mode: ${globalNavMode.currentMode}`,
+    );
   }, []);
   return null;
 }
@@ -274,10 +287,6 @@ function GlobeViewport({
         position: "relative",
         overflow: "hidden",
         minHeight: isLandscape ? "unset" : "40vh",
-        // Space background image is the sole DOM-layer background.
-        // The canvas alpha:true lets this show through where Three.js has
-        // no geometry (star gaps). Keeping it as one image avoids the
-        // dual-planet stripe issue that the tactical-planet PNG caused.
         backgroundImage:
           "url('/assets/generated/space-background-deep.dim_1920x1080.jpg')",
         backgroundSize: "cover",
@@ -291,16 +300,6 @@ function GlobeViewport({
       <HudErrorBoundary name="StatusBar">
         <PortraitStatusBar />
       </HudErrorBoundary>
-
-      {/*
-       * NOTE: cockpit-planet-tactical img REMOVED.
-       *
-       * That 800×800 AI-generated PNG had a hex-grid overlay baked in.
-       * It sat at zIndex:0 behind the Canvas (alpha:true), bleeding its
-       * grid lines through transparent star-field areas as vertical stripes
-       * on top of the Three.js globe. The Three.js EarthGlobe is now the
-       * only planet visual — no DOM-layer planet images in this viewport.
-       */}
 
       {/* Globe canvas — PRIMARY interaction target (no blocking overlays) */}
       <GlobeErrorBoundary>
@@ -349,10 +348,7 @@ function GlobeViewport({
 
       {/*
        * HUD overlay — decoration only.
-       * data-layer="hud-decoration" allows the assertion checker to verify
-       * pointer-events: none is set.
-       * Opacity reduced 0.15 → 0.08: the AI-generated scan lines in this
-       * image were visible as additional stripes at the previous opacity.
+       * Opacity reduced 0.15 → 0.08: scan lines in image were visible as stripes.
        */}
       <img
         src="/assets/generated/cockpit-hud-overlay-transparent.dim_1920x1080.png"
@@ -371,6 +367,9 @@ function GlobeViewport({
           zIndex: 3,
         }}
       />
+
+      {/* Navigation Mode HUD — V20 — pointer-events:none, sits in viewport layer */}
+      <NavigationModeHUD />
 
       {/* Cockpit frame + canopy — decoration, must not intercept globe taps */}
       <ShipMotionLayer
@@ -501,6 +500,9 @@ export default function TacticalStage() {
                 <WeaponHologramLayer />
               </HudErrorBoundary>
             </div>
+            <div style={{ position: "relative", pointerEvents: "none" }}>
+              <WeaponGhostLayer />
+            </div>
             <WeaponConsole />
           </div>
           <BottomCommandNav />
@@ -540,6 +542,15 @@ export default function TacticalStage() {
               <HudErrorBoundary name="Hologram">
                 <WeaponHologramLayer />
               </HudErrorBoundary>
+            </div>
+            <div
+              style={{
+                position: "relative",
+                pointerEvents: "none",
+                flexShrink: 0,
+              }}
+            >
+              <WeaponGhostLayer />
             </div>
             <div style={{ flexShrink: 0 }}>
               <WeaponConsole />

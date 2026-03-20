@@ -5,6 +5,15 @@
  *   - localStorage.getItem('debug_shell') === '1'
  *   - OR import.meta.env.DEV === true
  *
+ * V20 additions:
+ *   - NAV MODE section: currentMode, previousMode, last 5 transition entries
+ *   - Nav mode transition buttons for manual testing
+ *
+ * V21 additions:
+ *   - NAV GATE section: last tap accepted/rejected, rejection reason, auto-transition
+ *   - CAMERA OFFSETS section: applied FOV and distance offset from cameraOffsetObserver
+ *   - INPUT AUTHORITY section: targeting/drag/joystick authority per mode
+ *
  * Layout:
  *   Fixed bottom-right overlay (above QaPanel, z-index: 9994)
  *   Dark monospace panel with cyan tactical theme
@@ -13,9 +22,19 @@
  *   Panel container: pointer-events: auto
  */
 import { useCallback, useEffect, useState } from "react";
+import { useWeaponZoneStore } from "../../combat/useWeaponZoneStore";
 import { globalFSM } from "../../interaction/InteractionStateMachine";
 import { runInteractionAssertions } from "../../interaction/interactionAssertions";
 import { useInteractionStore } from "../../interaction/useInteractionStore";
+import {
+  NAV_TRANSITION_TABLE,
+  globalNavMode,
+} from "../../navigation/NavigationModeController";
+import {
+  cameraOffsetObserver,
+  useNavGateStore,
+} from "../../navigation/useNavGateStore";
+import { useNavigationModeStore } from "../../navigation/useNavigationModeStore";
 import { runInteractionModelTests } from "../../tests/interactionModelTests";
 import { runAllSmokeTests } from "../../tests/smokeTests";
 
@@ -29,6 +48,14 @@ const MONO: React.CSSProperties = {
   fontSize: 9,
   letterSpacing: "0.06em",
   lineHeight: 1.5,
+};
+
+const NAV_MODE_COLORS: Record<string, string> = {
+  orbitObservation: "rgba(80,200,255,0.9)",
+  tacticalLock: "rgba(255,80,80,0.9)",
+  approach: "rgba(255,160,40,0.9)",
+  breakaway: "rgba(160,100,255,0.9)",
+  cruise: "rgba(60,230,160,0.9)",
 };
 
 function Row({
@@ -132,9 +159,11 @@ function DebugSlider({
 function SmallButton({
   onClick,
   children,
+  color,
 }: {
   onClick: () => void;
   children: React.ReactNode;
+  color?: string;
 }) {
   return (
     <button
@@ -143,8 +172,8 @@ function SmallButton({
       style={{
         ...MONO,
         background: "rgba(0,30,50,0.8)",
-        border: "1px solid rgba(0,180,220,0.4)",
-        color: CYAN_DIM,
+        border: `1px solid ${color ?? "rgba(0,180,220,0.4)"}`,
+        color: color ?? CYAN_DIM,
         padding: "3px 8px",
         borderRadius: 3,
         cursor: "pointer",
@@ -156,6 +185,276 @@ function SmallButton({
     >
       {children}
     </button>
+  );
+}
+
+// ─── Nav Mode Section ──────────────────────────────────────────────────────
+
+function NavModeSection() {
+  const currentMode = useNavigationModeStore((s) => s.currentMode);
+  const previousMode = useNavigationModeStore((s) => s.previousMode);
+  const transitionHistory = useNavigationModeStore((s) => s.transitionHistory);
+  const globeTargetingEnabled = useNavigationModeStore(
+    (s) => s.globeTargetingEnabled,
+  );
+  const joystickPrimary = useNavigationModeStore((s) => s.joystickPrimary);
+
+  const currentColor = NAV_MODE_COLORS[currentMode] ?? CYAN;
+  const allowed = NAV_TRANSITION_TABLE[currentMode] ?? [];
+  // Derive last 5 history entries in component body (not in selector)
+  const last5 = transitionHistory.slice(-5).reverse();
+
+  return (
+    <>
+      <SectionHeader title="── NAV MODE ───────────────────────" />
+      <div style={{ pointerEvents: "none" }}>
+        <div
+          style={{
+            ...MONO,
+            display: "flex",
+            justifyContent: "space-between",
+            padding: "1px 0",
+          }}
+        >
+          <span style={{ color: CYAN_DIM }}>CURRENT</span>
+          <span style={{ color: currentColor, letterSpacing: "0.1em" }}>
+            {currentMode.toUpperCase()}
+          </span>
+        </div>
+        <Row label="PREVIOUS" value={previousMode.toUpperCase()} />
+        <Row
+          label="GLOBE TGT"
+          value={globeTargetingEnabled ? "ENABLED" : "disabled"}
+          warn={!globeTargetingEnabled}
+        />
+        <Row label="JOYSTICK PRI" value={joystickPrimary ? "YES" : "no"} />
+        <Row
+          label="ALLOWED →"
+          value={allowed.length > 0 ? allowed.join(", ") : "none"}
+        />
+      </div>
+
+      {/* Manual transition buttons */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 4 }}>
+        {allowed.map((target) => (
+          <SmallButton
+            key={target}
+            color={NAV_MODE_COLORS[target] ?? CYAN_DIM}
+            onClick={() =>
+              globalNavMode.transitionTo(target, "debug-shell manual")
+            }
+          >
+            → {target.slice(0, 7).toUpperCase()}
+          </SmallButton>
+        ))}
+      </div>
+
+      {/* Transition history */}
+      <div style={{ pointerEvents: "none", marginTop: 4 }}>
+        {last5.length === 0 && (
+          <div style={{ ...MONO, color: CYAN_FAINT }}>no transitions yet</div>
+        )}
+        {last5.map((h, i) => (
+          <div
+            key={`${h.from}-${h.to}-${h.ts}-${i}`}
+            style={{ ...MONO, color: CYAN_DIM, display: "flex", gap: 4 }}
+          >
+            <span style={{ color: CYAN_FAINT }}>{String(h.ts).slice(-5)}</span>
+            <span style={{ color: NAV_MODE_COLORS[h.from] ?? CYAN_DIM }}>
+              {h.from.slice(0, 5)}
+            </span>
+            <span style={{ color: CYAN_FAINT }}>→</span>
+            <span style={{ color: NAV_MODE_COLORS[h.to] ?? CYAN }}>
+              {h.to.slice(0, 5)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+// ─── V21: NAV GATE + CAMERA SECTION ─────────────────────────────────────────
+
+function NavGateSection() {
+  // Stable primitive selectors only
+  const lastTapRejection = useNavGateStore((s) => s.lastTapRejection);
+  const lastTapAccepted = useNavGateStore((s) => s.lastTapAccepted);
+  const lastAutoTransition = useNavGateStore((s) => s.lastAutoTransition);
+
+  // Camera offsets from mutable observer (no Zustand subscription needed)
+  const [camFov, setCamFov] = useState(60);
+  const [camDist, setCamDist] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setCamFov(Math.round(cameraOffsetObserver.appliedFov * 10) / 10);
+      setCamDist(
+        Math.round(cameraOffsetObserver.appliedDistOffset * 100) / 100,
+      );
+    }, 200);
+    return () => clearInterval(id);
+  }, []);
+
+  const tapStatus = (() => {
+    const rej = lastTapRejection;
+    const acc = lastTapAccepted;
+    if (!rej && !acc) return { label: "NO TAPS YET", warn: false };
+    const rejTs = rej?.ts ?? 0;
+    const accTs = acc?.ts ?? 0;
+    if (accTs >= rejTs) return { label: "ACCEPTED", warn: false };
+    return { label: "REJECTED", warn: true };
+  })();
+
+  return (
+    <>
+      <SectionHeader title="── NAV GATE ────────────────────────" />
+      <div style={{ pointerEvents: "none" }}>
+        <Row label="LAST TAP" value={tapStatus.label} warn={tapStatus.warn} />
+        {lastTapRejection &&
+          (lastTapRejection.ts ?? 0) >= (lastTapAccepted?.ts ?? 0) && (
+            <Row
+              label="REJECT REASON"
+              value={lastTapRejection.reason.slice(0, 28)}
+              warn
+            />
+          )}
+        {lastAutoTransition && (
+          <>
+            <Row
+              label="AUTO TRANSITION"
+              value={`${lastAutoTransition.from.slice(0, 5)} → ${lastAutoTransition.to.slice(0, 5)}`}
+            />
+            <Row
+              label="AUTO TGT"
+              value={lastAutoTransition.targetId.slice(0, 16)}
+            />
+          </>
+        )}
+      </div>
+      <SectionHeader title="── CAMERA OFFSETS ──────────────────" />
+      <div style={{ pointerEvents: "none" }}>
+        <Row label="APPLIED FOV" value={`${camFov}°`} />
+        <Row
+          label="DIST OFFSET"
+          value={camDist >= 0 ? `+${camDist}` : String(camDist)}
+          warn={Math.abs(camDist) > 0.5}
+        />
+        <Row
+          label="MODE"
+          value={cameraOffsetObserver.currentMode.slice(0, 14).toUpperCase()}
+        />
+      </div>
+      <SectionHeader title="── INPUT AUTHORITY ─────────────────" />
+      <div style={{ pointerEvents: "none" }}>
+        {(() => {
+          const mode = globalNavMode.currentMode;
+          const def = globalNavMode.currentDefinition;
+          return (
+            <>
+              <Row
+                label="TARGETING AUTH"
+                value={
+                  def.globe.targetingEnabled
+                    ? mode.slice(0, 12).toUpperCase()
+                    : "DISABLED"
+                }
+                warn={!def.globe.targetingEnabled}
+              />
+              <Row
+                label="DRAG AUTH"
+                value={def.input.globeOwnsDrag ? "GLOBE" : "none"}
+                warn={!def.input.globeOwnsDrag}
+              />
+              <Row
+                label="JOYSTICK PRI"
+                value={def.input.joystickPrimary ? "YES" : "no"}
+              />
+            </>
+          );
+        })()}
+      </div>
+    </>
+  );
+}
+
+function WeaponZonesSection() {
+  const intentLevels = useWeaponZoneStore((s) => s.intentLevels);
+  const dwellTimes = useWeaponZoneStore((s) => s.dwellTimes);
+  const hitCounts = useWeaponZoneStore((s) => s.hitCounts);
+  const missCounts = useWeaponZoneStore((s) => s.missCounts);
+  const consoleMissCount = useWeaponZoneStore((s) => s.consoleMissCount);
+  const assistTargetingUI = useWeaponZoneStore((s) => s.assistTargetingUI);
+  const setAssistTargetingUI = useWeaponZoneStore(
+    (s) => s.setAssistTargetingUI,
+  );
+
+  const weaponEntries = Object.entries(intentLevels);
+
+  return (
+    <>
+      <SectionHeader title="── WEAPON ZONES ────────────────────" />
+      <Row
+        label="ASSIST TARGETING"
+        value={assistTargetingUI ? "ON" : "OFF"}
+        warn={!assistTargetingUI}
+      />
+      <div style={{ display: "flex", gap: 4, marginTop: 2 }}>
+        <SmallButton onClick={() => setAssistTargetingUI(!assistTargetingUI)}>
+          TOGGLE ASSIST
+        </SmallButton>
+      </div>
+      <div style={{ pointerEvents: "none", marginTop: 2 }}>
+        {weaponEntries.map(([id, level]) => {
+          const hits = hitCounts[id] ?? 0;
+          const misses = missCounts[id] ?? 0;
+          const total = hits + misses;
+          const hitRate = total > 0 ? Math.round((hits / total) * 100) : 0;
+          const dwell = dwellTimes[id] ?? 0;
+          return (
+            <div
+              key={id}
+              style={{
+                ...MONO,
+                display: "flex",
+                flexDirection: "column",
+                borderTop: "1px solid rgba(0,160,200,0.12)",
+                padding: "2px 0",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: CYAN }}>{id.toUpperCase()}</span>
+                <span style={{ color: level > 0 ? "#00ff88" : CYAN_FAINT }}>
+                  L{level} dwell:{dwell}ms
+                </span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: CYAN_DIM }}>
+                  hit:{hits} miss:{misses}
+                </span>
+                <span
+                  style={{
+                    color:
+                      hitRate >= 70
+                        ? "#00ff88"
+                        : hitRate >= 40
+                          ? "#ffaa00"
+                          : "#ff4444",
+                  }}
+                >
+                  {total > 0 ? `${hitRate}%` : "—"}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <Row
+        label="CONSOLE MISSES"
+        value={String(consoleMissCount)}
+        warn={consoleMissCount > 3}
+      />
+    </>
   );
 }
 
@@ -316,8 +615,14 @@ export default function InteractionDebugShell() {
 
       {!collapsed && (
         <div style={{ padding: "4px 8px 8px" }}>
+          {/* ── NAV MODE (V20) ────────────────────────────────────────── */}
+          <NavModeSection />
+
+          {/* ── NAV GATE + CAMERA (V21) ──────────────────────────────── */}
+          <NavGateSection />
+
           {/* Pointer info */}
-          <SectionHeader title="── POINTER ──────────────────────" />
+          <SectionHeader title="── POINTER ─────────────────────────────" />
           <Row label="POINTER OWNER" value={pointerOwner} />
           <Row label="TOPMOST TARGET" value={topmostTarget} />
           <Row
@@ -327,7 +632,7 @@ export default function InteractionDebugShell() {
           />
 
           {/* Events */}
-          <SectionHeader title="── LAST 10 EVENTS ───────────────" />
+          <SectionHeader title="── LAST 10 EVENTS ───────────────────" />
           <div style={{ pointerEvents: "none" }}>
             {recentEvents.length === 0 && (
               <div style={{ ...MONO, color: CYAN_FAINT }}>no events yet</div>
@@ -354,7 +659,7 @@ export default function InteractionDebugShell() {
           </div>
 
           {/* Raycast + Lock */}
-          <SectionHeader title="── RAYCAST / LOCK ───────────────" />
+          <SectionHeader title="── RAYCAST / LOCK ───────────────────" />
           <Row
             label="Last Raycast"
             value={
@@ -377,7 +682,7 @@ export default function InteractionDebugShell() {
           />
 
           {/* Joystick */}
-          <SectionHeader title="── JOYSTICK ────────────────────" />
+          <SectionHeader title="── JOYSTICK ─────────────────────────" />
           <Row
             label="Joystick Active"
             value={joystickActive ? "YES" : "NO"}
@@ -386,7 +691,7 @@ export default function InteractionDebugShell() {
           <Row label="Tap/Drag" value={tapVsDrag.toUpperCase()} />
 
           {/* Globe Health */}
-          <SectionHeader title="── GLOBE HEALTH ─────────────────" />
+          <SectionHeader title="── GLOBE HEALTH ────────────────────" />
           {(() => {
             const canvas = document.querySelector(
               "canvas",
@@ -408,7 +713,7 @@ export default function InteractionDebugShell() {
           })()}
 
           {/* Assertions */}
-          <SectionHeader title="── ASSERTIONS ───────────────────" />
+          <SectionHeader title="── ASSERTIONS ──────────────────────" />
           <div style={{ pointerEvents: "none" }}>
             {assertionResults.length === 0 && (
               <div style={{ ...MONO, color: CYAN_FAINT }}>not run yet</div>
@@ -450,7 +755,7 @@ export default function InteractionDebugShell() {
           </div>
 
           {/* Smoke Tests */}
-          <SectionHeader title="── SMOKE TESTS ──────────────────" />
+          <SectionHeader title="── SMOKE TESTS ─────────────────────" />
           <div style={{ pointerEvents: "none" }}>
             {smokeRan ? (
               <Row
@@ -485,7 +790,7 @@ export default function InteractionDebugShell() {
           )}
 
           {/* FSM State History */}
-          <SectionHeader title="── FSM HISTORY ──────────────────" />
+          <SectionHeader title="── FSM HISTORY ─────────────────────" />
           <div style={{ pointerEvents: "none" }}>
             {globalFSM
               .getHistory()
@@ -501,8 +806,11 @@ export default function InteractionDebugShell() {
               ))}
           </div>
 
+          {/* Weapon Zones */}
+          <WeaponZonesSection />
+
           {/* Tuning */}
-          <SectionHeader title="── TUNING ───────────────────────" />
+          <SectionHeader title="── TUNING ─────────────────────────" />
           <DebugSlider
             label="Drag Threshold"
             min={2}

@@ -22,10 +22,14 @@ import {
   useWeaponAnimStore,
 } from "../../combat/useWeaponAnimState";
 import type { WeaponAnimState } from "../../combat/useWeaponAnimState";
+import { useWeaponZoneIntent } from "../../combat/useWeaponZoneIntent";
+import { useWeaponZoneStore } from "../../combat/useWeaponZoneStore";
 import { useWeaponsStore } from "../../combat/useWeapons";
 import type { Weapon } from "../../combat/useWeapons";
+import { initAudio, playDischargeBurst } from "../../combat/weaponSynth";
 import { useTacticalStore } from "../../hooks/useTacticalStore";
 import { useTutorialStore } from "../../tutorial/useTutorialStore";
+import WeaponMissTapFeedback from "./WeaponMissTapFeedback";
 
 // ─── Utility helpers ──────────────────────────────────────────────────────────────
 function cooldownFraction(w: Weapon): number {
@@ -332,11 +336,20 @@ function WeaponSlot({
   const slotHighlight =
     isSelected || isHovered ? "rgba(0,200,180,0.06)" : "transparent";
 
+  const { handlers: intentHandlers } = useWeaponZoneIntent({
+    weaponId: weapon.id,
+    weaponType: weapon.type,
+  });
+  const recordHit = useWeaponZoneStore((s) => s.recordHit);
+
   const handleClick = () => {
     if (isDisabled) return;
     if (!isSelected) onSelect();
-    else if (ready && hasTarget) onFire();
-    else onSelect();
+    else if (ready && hasTarget) {
+      playDischargeBurst(weapon.type);
+      recordHit(weapon.id);
+      onFire();
+    } else onSelect();
   };
 
   return (
@@ -348,10 +361,28 @@ function WeaponSlot({
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") handleClick();
       }}
-      onMouseEnter={() => onHover(weapon.id)}
-      onMouseLeave={() => onHover(null)}
-      onTouchStart={() => onHover(weapon.id)}
-      onTouchEnd={() => onHover(null)}
+      onMouseEnter={() => {
+        onHover(weapon.id);
+        intentHandlers.onPointerEnter();
+      }}
+      onMouseLeave={() => {
+        onHover(null);
+        intentHandlers.onPointerLeave();
+      }}
+      onTouchStart={() => {
+        onHover(weapon.id);
+        intentHandlers.onPointerEnter();
+        initAudio();
+      }}
+      onTouchEnd={() => {
+        onHover(null);
+        intentHandlers.onPointerLeave();
+      }}
+      onPointerDown={() => {
+        intentHandlers.onPointerDown();
+        initAudio();
+      }}
+      onPointerUp={intentHandlers.onPointerUp}
       style={{
         flex: isPrimary ? "0 0 55%" : "0 0 45%",
         display: "flex",
@@ -726,74 +757,82 @@ function WeaponCluster({
     <div
       style={{
         flex: "0 0 30%",
-        display: "flex",
-        flexDirection: "column",
-        background: "linear-gradient(180deg, #080c10 0%, #0a0f14 100%)",
-        borderRadius: "5px",
-        boxShadow: clusterShadow,
-        border: "1px solid rgba(0,120,140,0.18)",
-        overflow: "hidden",
-        transition: "box-shadow 200ms ease",
-        position: "relative",
-        backgroundImage:
-          "linear-gradient(180deg, #080c10 0%, #0a0f14 100%), repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,200,180,0.012) 3px, rgba(0,200,180,0.012) 4px)",
+        opacity: 0,
+        pointerEvents: "auto",
       }}
     >
-      <WeaponSlot
-        weapon={topWeapon}
-        isPrimary
-        isSelected={topSelected}
-        hasTarget={hasTarget}
-        ocid={`console.${topWeapon.id}_button`}
-        onSelect={() => onSelect(topWeapon.id)}
-        onFire={() => onFire(topWeapon.id)}
-        isRecommended={recommendedWeaponId === topWeapon.id}
-      />
       <div
         style={{
-          height: 1,
-          background: "rgba(0,200,180,0.15)",
-          boxShadow: "0 0 4px rgba(0,200,180,0.08)",
-          flexShrink: 0,
-          margin: "0 6px",
-        }}
-      />
-      <WeaponSlot
-        weapon={bottomWeapon}
-        isPrimary={false}
-        isSelected={bottomSelected}
-        hasTarget={hasTarget}
-        ocid={`console.${bottomWeapon.id}_button`}
-        onSelect={() => onSelect(bottomWeapon.id)}
-        onFire={() => onFire(bottomWeapon.id)}
-        isRecommended={recommendedWeaponId === bottomWeapon.id}
-      />
-      <div
-        style={{
-          background:
-            "linear-gradient(135deg, #3d2e1a 0%, #5a3e20 50%, #3d2e1a 100%)",
-          borderTop: "1px solid rgba(154,120,64,0.4)",
-          padding: "2px 8px",
           display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 4,
+          flexDirection: "column",
+          background: "linear-gradient(180deg, #080c10 0%, #0a0f14 100%)",
+          borderRadius: "5px",
+          boxShadow: clusterShadow,
+          border: "1px solid rgba(0,120,140,0.18)",
+          overflow: "hidden",
+          transition: "box-shadow 200ms ease",
+          position: "relative",
+          height: "100%",
+          backgroundImage:
+            "linear-gradient(180deg, #080c10 0%, #0a0f14 100%), repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,200,180,0.012) 3px, rgba(0,200,180,0.012) 4px)",
         }}
       >
-        <Screw />
-        <span
+        <WeaponSlot
+          weapon={topWeapon}
+          isPrimary
+          isSelected={topSelected}
+          hasTarget={hasTarget}
+          ocid={`console.${topWeapon.id}_button`}
+          onSelect={() => onSelect(topWeapon.id)}
+          onFire={() => onFire(topWeapon.id)}
+          isRecommended={recommendedWeaponId === topWeapon.id}
+        />
+        <div
           style={{
-            fontFamily: "monospace",
-            fontSize: 5,
-            letterSpacing: "0.2em",
-            fontWeight: 700,
-            color: "rgba(180,140,70,0.7)",
-            textTransform: "uppercase",
+            height: 1,
+            background: "rgba(0,200,180,0.15)",
+            boxShadow: "0 0 4px rgba(0,200,180,0.08)",
+            flexShrink: 0,
+            margin: "0 6px",
+          }}
+        />
+        <WeaponSlot
+          weapon={bottomWeapon}
+          isPrimary={false}
+          isSelected={bottomSelected}
+          hasTarget={hasTarget}
+          ocid={`console.${bottomWeapon.id}_button`}
+          onSelect={() => onSelect(bottomWeapon.id)}
+          onFire={() => onFire(bottomWeapon.id)}
+          isRecommended={recommendedWeaponId === bottomWeapon.id}
+        />
+        <div
+          style={{
+            background:
+              "linear-gradient(135deg, #3d2e1a 0%, #5a3e20 50%, #3d2e1a 100%)",
+            borderTop: "1px solid rgba(154,120,64,0.4)",
+            padding: "2px 8px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 4,
           }}
         >
-          {side === "left" ? "SYSTEM A" : "SYSTEM B"}
-        </span>
-        <Screw />
+          <Screw />
+          <span
+            style={{
+              fontFamily: "monospace",
+              fontSize: 5,
+              letterSpacing: "0.2em",
+              fontWeight: 700,
+              color: "rgba(180,140,70,0.7)",
+              textTransform: "uppercase",
+            }}
+          >
+            {side === "left" ? "SYSTEM A" : "SYSTEM B"}
+          </span>
+          <Screw />
+        </div>
       </div>
     </div>
   );
@@ -1511,6 +1550,8 @@ export default function WeaponConsole() {
             }}
           />
         )}
+
+        <WeaponMissTapFeedback />
 
         {/* Console row */}
         <div
