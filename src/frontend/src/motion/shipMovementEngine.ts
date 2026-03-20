@@ -1,9 +1,12 @@
 /**
  * shipMovementEngine — RAF-based input → orbital position driver.
  *
- * Sensitivity reduced ~50% from previous values.
- * Added setCockpitLean() hook for motion engine sway.
- * Added setGForceAmp() to scale sway with velocity (G-force impression).
+ * V17.1 CHANGES:
+ * - Joystick input NO LONGER drives velTheta/velPhi (orbital camera).
+ * - Keyboard only drives orbital velocity.
+ * - Joystick drives cockpit lean + G-force amp + joystickMotionIntensity only.
+ * - joystickMotionIntensity exported for starfield particle speed.
+ * - stopShipMovementEngine now zeros joystick state cleanly.
  */
 import { setCockpitLean, setGForceAmp } from "./shipMotionEngine";
 import { useShipStore } from "./useShipStore";
@@ -13,6 +16,9 @@ const keyboard = { x: 0, y: 0 };
 let headingYaw = 0;
 let headingPitch = 0;
 
+// Module-level joystick motion intensity — decays toward 0 when joystick is neutral
+let joystickMotionIntensity = 0;
+
 // Reduced ~50% from 0.00045
 const THRUST_RATE = 0.000225;
 // Reduced ~50% from 0.0018
@@ -20,6 +26,7 @@ const RIGHT_DRAG_SENS = 0.0009;
 const MAX_HYaw = 0.32;
 const MAX_HPitch = 0.22;
 const HEADING_DECAY = 0.975;
+const INTENSITY_DECAY = 0.92;
 
 // Max velocity for G-force amp normalization
 const MAX_VEL = THRUST_RATE * 18;
@@ -45,6 +52,11 @@ export function setKeyboardInput(x: number, y: number) {
   keyboard.y = Math.max(-1, Math.min(1, y));
 }
 
+/** Returns current joystick motion intensity (0–1). Used by starfield particles. */
+export function getJoystickMotionIntensity(): number {
+  return joystickMotionIntensity;
+}
+
 let rafId: number | null = null;
 let lastTime = 0;
 
@@ -53,8 +65,10 @@ function tick(now: number) {
   lastTime = now;
 
   const store = useShipStore.getState();
-  const inputX = joystick.x !== 0 ? joystick.x : keyboard.x;
-  const inputY = joystick.y !== 0 ? joystick.y : keyboard.y;
+
+  // V17.1: Keyboard ONLY drives orbital velocity — joystick no longer bleeds into globe rotation
+  const inputX = keyboard.x;
+  const inputY = keyboard.y;
 
   const thrustTheta = inputX * THRUST_RATE;
   const thrustPhi = -inputY * THRUST_RATE;
@@ -75,14 +89,27 @@ function tick(now: number) {
   headingPitch *= HEADING_DECAY;
   store.setHeading(headingYaw, headingPitch);
 
-  // Drive cockpit lean: opposite direction to movement (subtle 3-5% feel)
-  setCockpitLean(-inputX * 1.5);
+  // Joystick drives cosmetic layers only (lean + G-force + intensity)
+  const jsX = joystick.x;
+  const jsY = joystick.y;
 
-  // G-force amp: scale with current velocity magnitude
-  const velMag = Math.sqrt(nVT * nVT + nVP * nVP);
-  const velNorm = Math.min(1, velMag / MAX_VEL);
-  // 1.0 at rest → 1.5 at full speed (modest amplification of sway)
-  setGForceAmp(1.0 + velNorm * 0.5);
+  const jsMag = Math.sqrt(jsX * jsX + jsY * jsY);
+  if (jsMag > 0.01) {
+    // Joystick is active — update intensity and lean
+    joystickMotionIntensity = Math.min(1, jsMag);
+    setCockpitLean(-jsX * 1.5);
+    const velNorm = Math.min(1, jsMag);
+    setGForceAmp(1.0 + velNorm * 0.5);
+  } else {
+    // Joystick neutral — decay intensity, lean driven by keyboard
+    joystickMotionIntensity *= INTENSITY_DECAY;
+    if (joystickMotionIntensity < 0.01) joystickMotionIntensity = 0;
+    // Fall back to keyboard for lean when joystick is neutral
+    setCockpitLean(-inputX * 1.5);
+    const velMag = Math.sqrt(nVT * nVT + nVP * nVP);
+    const velNorm = Math.min(1, velMag / MAX_VEL);
+    setGForceAmp(1.0 + velNorm * 0.5);
+  }
 
   rafId = requestAnimationFrame(tick);
 }
@@ -98,6 +125,11 @@ export function stopShipMovementEngine() {
     cancelAnimationFrame(rafId);
     rafId = null;
   }
+  // V17.1: Zero out joystick state on stop
+  setJoystickInput(0, 0);
+  setCockpitLean(0);
+  setGForceAmp(1.0);
+  joystickMotionIntensity = 0;
 }
 
 // ─── Keyboard ──────────────────────────────────────────────────────────────────────────────────
@@ -161,10 +193,10 @@ export function attachMouseDragListeners() {
     const dy = e.clientY - mouseLY;
     mouseLX = e.clientX;
     mouseLY = e.clientY;
+    // Only right-side mouse drags rotate the globe (preserves globe click targeting on left)
     if (e.clientX > window.innerWidth * 0.5) {
       const s = useShipStore.getState();
       const maxV = 0.008;
-      // Reduced ~50% from 0.0006/0.0005
       s.setVelocity(
         Math.max(-maxV, Math.min(maxV, s.velTheta - dx * 0.0003)),
         Math.max(-maxV, Math.min(maxV, s.velPhi + dy * 0.00025)),

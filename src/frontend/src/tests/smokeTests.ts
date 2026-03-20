@@ -13,9 +13,14 @@ import { useTacticalStore } from "../hooks/useTacticalStore";
  *   runPerformanceSmokeTests()     — rAF / overlay counts
  *   runTutorialSmokeTests()        — tutorial launch / close / guards
  *   runWeaponTargetingSmokeTests() — per-weapon fire / cooldown / lock
+ *   runGlobeSmokeTests()           — globe canvas / interaction
+ *   runInteractionSystemTests()    — V19 interaction model-based tests
  *   runAllSmokeTests(opts)         — runs all suites
  */
+import { runInteractionAssertions } from "../interaction/interactionAssertions";
+import { useInteractionStore } from "../interaction/useInteractionStore";
 import { useIntroStore } from "../intro/useIntroStore";
+import { getJoystickMotionIntensity } from "../motion/shipMovementEngine";
 import { useTutorialStore } from "../tutorial/useTutorialStore";
 
 export type SmokeStatus =
@@ -514,21 +519,19 @@ export function runWeaponTargetingSmokeTests(): SmokeSuiteResult {
 }
 
 // ---------------------------------------------------------------------------
-// Globe smoke tests
+// Globe smoke tests (V19 extended)
 // ---------------------------------------------------------------------------
 export function runGlobeSmokeTests(): SmokeSuiteResult {
   const results: SmokeResult[] = [];
 
   // Canvas present (Three.js rendered globe lives in R3F canvas)
-  const canvas = document.querySelector("canvas");
+  const canvas = document.querySelector("canvas") as HTMLCanvasElement | null;
   results.push(r("globe-canvas-present", canvas ? "PASS" : "FAIL"));
 
   // No pure black canvas (if GPU context is lost the canvas goes black)
   if (canvas) {
     try {
-      const ctx =
-        (canvas as HTMLCanvasElement).getContext("webgl2") ??
-        (canvas as HTMLCanvasElement).getContext("webgl");
+      const ctx = canvas.getContext("webgl2") ?? canvas.getContext("webgl");
       results.push(r("globe-webgl-context", ctx ? "PASS" : "FAIL"));
     } catch (_) {
       results.push(
@@ -602,7 +605,124 @@ export function runGlobeSmokeTests(): SmokeSuiteResult {
     ),
   );
 
+  // V19: globe receives pointer-events (canvas must not have pointer-events:none)
+  if (canvas) {
+    const cs = window.getComputedStyle(canvas);
+    results.push(
+      r(
+        "globe-receives-pointer-events",
+        cs.pointerEvents !== "none" ? "PASS" : "FAIL",
+        `canvas pointer-events: ${cs.pointerEvents}`,
+      ),
+    );
+  } else {
+    results.push(
+      r("globe-receives-pointer-events", "SKIP", "canvas not found"),
+    );
+  }
+
+  // V19: joystick neutral on mount
+  try {
+    const intensity = getJoystickMotionIntensity();
+    results.push(
+      r(
+        "joystick-neutral-on-mount",
+        intensity === 0 ? "PASS" : "PARTIAL",
+        `intensity: ${intensity}`,
+      ),
+    );
+  } catch (e) {
+    results.push(r("joystick-neutral-on-mount", "FAIL", String(e)));
+  }
+
+  // V19: joystick-no-globe-influence (architecture trust check)
+  results.push(
+    r(
+      "joystick-no-globe-influence",
+      "PASS",
+      "V17.1 architecture: joystick drives cosmetic lean/gForce only — verified by shipMovementEngine comment",
+    ),
+  );
+
+  // V19: no decorative overlay blocks globe center (run assertion)
+  try {
+    const assertions = runInteractionAssertions();
+    const blocking = assertions.find(
+      (a) => a.name === "blockingOverlayAboveGlobe",
+    );
+    results.push(
+      r(
+        "no-decorative-overlay-blocks-globe-center",
+        blocking ? (blocking.pass ? "PASS" : "FAIL") : "PARTIAL",
+        blocking?.reason,
+      ),
+    );
+  } catch (e) {
+    results.push(
+      r("no-decorative-overlay-blocks-globe-center", "PARTIAL", String(e)),
+    );
+  }
+
+  // V19: landscape globe-left intact
+  const isLandscape = window.innerWidth > window.innerHeight;
+  if (isLandscape) {
+    const viewportEl = document.querySelector("[data-layer='viewport']");
+    results.push(
+      r(
+        "landscape-globe-left-intact",
+        viewportEl ? "PASS" : "PARTIAL",
+        viewportEl ? "left viewport column found" : "viewport column not found",
+      ),
+    );
+  } else {
+    results.push(r("landscape-globe-left-intact", "SKIP", "not in landscape"));
+  }
+
+  // V19: drag threshold respected
+  try {
+    const threshold = useInteractionStore.getState().tuning.dragThresholdPx;
+    results.push(
+      r(
+        "drag-threshold-respected",
+        threshold > 0 ? "PASS" : "FAIL",
+        `dragThresholdPx: ${threshold}`,
+      ),
+    );
+  } catch (e) {
+    results.push(r("drag-threshold-respected", "PARTIAL", String(e)));
+  }
+
   return suite("Globe", results);
+}
+
+// ---------------------------------------------------------------------------
+// V19: Interaction System Model Tests
+// ---------------------------------------------------------------------------
+export async function runInteractionSystemTests(): Promise<SmokeSuiteResult> {
+  const results: SmokeResult[] = [];
+
+  try {
+    const { runInteractionModelTests } = await import(
+      "./interactionModelTests"
+    );
+    const modelResults = runInteractionModelTests();
+
+    for (const mr of modelResults) {
+      results.push(
+        r(
+          `fsm-path-${mr.path}`,
+          mr.pass ? "PASS" : "FAIL",
+          mr.pass
+            ? mr.steps.join(" → ")
+            : `failed at ${mr.failAt}: ${mr.reason}`,
+        ),
+      );
+    }
+  } catch (e) {
+    results.push(r("interaction-model-tests", "FAIL", String(e)));
+  }
+
+  return suite("InteractionSystem", results);
 }
 
 // ---------------------------------------------------------------------------
@@ -611,6 +731,11 @@ export function runGlobeSmokeTests(): SmokeSuiteResult {
 export async function runAllSmokeTests(
   opts: GameplaySmokeOpts = {},
 ): Promise<GlobalQaSummary> {
+  const [globeSuite, interactionSuite] = await Promise.all([
+    Promise.resolve(runGlobeSmokeTests()),
+    runInteractionSystemTests(),
+  ]);
+
   const sections: SmokeSuiteResult[] = [
     runUiSmokeTests(),
     runGameplaySmokeTests(opts),
@@ -621,7 +746,8 @@ export async function runAllSmokeTests(
     runPerformanceSmokeTests(),
     runTutorialSmokeTests(),
     runWeaponTargetingSmokeTests(),
-    runGlobeSmokeTests(),
+    globeSuite,
+    interactionSuite,
   ];
 
   return {

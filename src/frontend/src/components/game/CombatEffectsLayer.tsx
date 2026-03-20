@@ -1,3 +1,15 @@
+/**
+ * CombatEffectsLayer — projectile and impact effects rendered inside the Canvas.
+ *
+ * ROTATION FIX (this pass):
+ * ────────────────────────────────────
+ * TGT-* targets store lat/lng in globe-LOCAL coordinates (accounting for
+ * globe rotation at time of tap). To resolve the correct WORLD-SPACE position
+ * for projectile targeting, we apply the current globeState.rotationY to the
+ * local surface vector. Without this, projectiles fired at a TGT would aim at
+ * the pre-rotation world position, drifting further from the visual target as
+ * the globe rotates.
+ */
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { NODE_POSITIONS } from "../../GlobeCore";
@@ -6,6 +18,7 @@ import { useEnemyStore } from "../../combat/useEnemyStore";
 import { useThreatStore } from "../../combat/useThreatStore";
 import { useWeaponsStore } from "../../combat/useWeapons";
 import { useTacticalStore } from "../../hooks/useTacticalStore";
+import { globeState, toGlobeWorld } from "../../motion/globeState";
 import { useShipStore } from "../../motion/useShipStore";
 import DestructionEffects from "./DestructionEffects";
 import {
@@ -24,34 +37,37 @@ import {
 
 /**
  * Resolve a targetId to a world-space THREE.Vector3.
- * Handles four target types:
- *  - NODE-xx    → fixed globe surface node
- *  - TGT-xxxx   → coordinate target from globe tap
- *  - THREAT-xxx → asteroid threat interpolated world position
- *  - SAT-xxx    → enemy satellite (position from useEnemyStore)
- *  - BASE-xxx   → planetary base (position from useEnemyStore)
+ *
+ * TGT-* targets: lat/lng are globe-local (rotation-compensated). We apply
+ * globeState.rotationY to convert back to current world-space position so
+ * projectiles aim at the correct location on the rotating globe.
+ *
+ * All other target types (fixed nodes, threats, enemies) are already in
+ * world-space and need no rotation correction.
  */
 function resolveTargetPos(nodeId: string): THREE.Vector3 | null {
-  // Fixed globe nodes (Record<id, Vec3>)
+  // Fixed globe nodes — world-space, no rotation needed
   const nodePos = NODE_POSITIONS[nodeId];
   if (nodePos) {
     return nodePos.clone().multiplyScalar(1.53);
   }
 
-  // Globe coordinate target (TGT-xxxx)
+  // Globe coordinate target (TGT-xxxx) — lat/lng in globe-local space
   if (nodeId.startsWith("TGT-")) {
     const gt = useTacticalStore.getState().globeTarget;
     if (gt?.lat !== undefined && gt?.lng !== undefined) {
-      // Use same formula as GlobeCore.latLngToVec3
+      // Compute globe-local surface position from lat/lng
       const phi = (90 - gt.lat) * (Math.PI / 180);
       const theta = (gt.lng + 180) * (Math.PI / 180);
-      return new THREE.Vector3(
-        -1.53 * Math.sin(phi) * Math.cos(theta),
-        1.53 * Math.cos(phi),
-        1.53 * Math.sin(phi) * Math.sin(theta),
-      );
+      const localX = -1.53 * Math.sin(phi) * Math.cos(theta);
+      const localY = 1.53 * Math.cos(phi);
+      const localZ = 1.53 * Math.sin(phi) * Math.sin(theta);
+
+      // Apply current globe rotation to get world-space position
+      const [wx, wy, wz] = toGlobeWorld(localX, localY, localZ);
+      return new THREE.Vector3(wx, wy, wz);
     }
-    // Fallback: fire toward globe center from ship
+    // Fallback: fire toward globe center from ship position
     const ship = useShipStore.getState();
     const r = ship.orbitalRadius;
     const cx = r * Math.cos(ship.orbitalPhi) * Math.sin(ship.orbitalTheta);
@@ -60,7 +76,7 @@ function resolveTargetPos(nodeId: string): THREE.Vector3 | null {
     return new THREE.Vector3(-cx, -cy, -cz).normalize().multiplyScalar(1.5);
   }
 
-  // Threat target (THREAT-xxx)
+  // Threat target (THREAT-xxx) — world-space interpolated position
   if (nodeId.startsWith("THREAT-")) {
     const threat = useThreatStore
       .getState()
@@ -88,7 +104,7 @@ function resolveTargetPos(nodeId: string): THREE.Vector3 | null {
     }
   }
 
-  // Enemy satellite or base (SAT-xxx / BASE-xxx)
+  // Enemy satellite or base (SAT-xxx / BASE-xxx) — world-space from store
   if (nodeId.startsWith("SAT-") || nodeId.startsWith("BASE-")) {
     const enemy = useEnemyStore.getState().enemies.find((e) => e.id === nodeId);
     if (enemy) {
@@ -108,11 +124,16 @@ export default function CombatEffectsLayer() {
     tick(delta * 1000);
   });
 
+  // Resolve at render time (not inside useFrame) so effects always use the
+  // latest globe rotation via globeState.rotationY
   const targetPos = firingEffect
     ? resolveTargetPos(firingEffect.targetId)
     : null;
 
   const originPos = firingEffect ? getShipOriginWorld() : undefined;
+
+  // Suppress unused import lint — globeState is used inside resolveTargetPos
+  void globeState;
 
   return (
     <group>
@@ -152,7 +173,6 @@ export default function CombatEffectsLayer() {
               duration={firingEffect.duration}
             />
           )}
-
           {firingEffect.type === "pulse" && (
             <PulseImpact
               targetPos={targetPos}

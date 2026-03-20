@@ -1,11 +1,20 @@
 /**
  * TacticalStage — Main game view.
  *
- * Boot/render hardening (V15):
- * - onCreated callback logs WebGL context init
- * - SceneBootConfirm fires console log on first useFrame tick
- * - BootFadeOverlay shows "LOADING" until first 3D frame confirms render
- * - All store init is wrapped so errors are caught at the boundary above
+ * V17.1: Landscape layout, pointer-events audit, InputLayerDebug.
+ * V19:   InteractionDebugShell, runInteractionAssertions on mount.
+ * V20:   Raycast + rendering fixes.
+ *   - Removed cockpit-planet-tactical img.
+ *     ROOT CAUSE OF STRIPE ARTIFACT: This AI-generated PNG has a hex-grid
+ *     overlay and was positioned at zIndex:0 behind the Canvas (alpha:true).
+ *     SpaceBackground renders stars/particles — it does not fill the entire
+ *     canvas with a solid colour. The transparent canvas areas showed the
+ *     tactical-planet grid through, creating vertical stripe / moiré patterns
+ *     on top of the Three.js globe. Removed entirely; the Three.js EarthGlobe
+ *     is the sole planet visual.
+ *   - HUD overlay: added data-layer="hud-decoration" and reduced opacity 0.15→0.08.
+ *     The generated HUD overlay contains scan lines. At 15% opacity with
+ *     mixBlendMode:screen these appeared as additional stripes. Reduced.
  */
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useRef, useState } from "react";
@@ -14,6 +23,7 @@ import { useEnemyStore } from "./combat/useEnemyStore";
 import { usePlayerStore } from "./combat/usePlayerStore";
 import { useWeaponsStore } from "./combat/useWeapons";
 import { HostileContactCinematic } from "./components/cinematics/HostileContactCinematic";
+import InteractionDebugShell from "./components/debug/InteractionDebugShell";
 import BottomCommandNav from "./components/game/BottomCommandNav";
 import CameraController from "./components/game/CameraController";
 import CockpitFrame from "./components/game/CockpitFrame";
@@ -23,6 +33,7 @@ import EnemyTargetsLayer from "./components/game/EnemyTargetsLayer";
 import { GlobeErrorBoundary } from "./components/game/GlobeErrorBoundary";
 import { HudErrorBoundary } from "./components/game/HudErrorBoundary";
 import IncomingFireLayer from "./components/game/IncomingFireLayer";
+import InputLayerDebug from "./components/game/InputLayerDebug";
 import MobileJoystick from "./components/game/MobileJoystick";
 import PlayerShieldHUD from "./components/game/PlayerShieldHUD";
 import PortraitCommandDrawer from "./components/game/PortraitCommandDrawer";
@@ -39,7 +50,9 @@ import UpperCanopy from "./components/game/UpperCanopy";
 import VelocityIndicator from "./components/game/VelocityIndicator";
 import WeaponConsole from "./components/game/WeaponConsole";
 import WeaponHologramLayer from "./components/game/WeaponHologramLayer";
+import { useIsLandscape } from "./hooks/useIsLandscape";
 import { useTacticalStore } from "./hooks/useTacticalStore";
+import { runInteractionAssertions } from "./interaction/interactionAssertions";
 import { useIntroStore } from "./intro/useIntroStore";
 import { useShipMovementSetup } from "./motion/useShipMovementSetup";
 import { useShipSystemsStore } from "./systems/useShipSystemsStore";
@@ -99,16 +112,13 @@ function GameBootstrap() {
   return null;
 }
 
-// Lives inside the Canvas. Fires onConfirm on the very first useFrame tick.
 function SceneBootConfirm({ onConfirm }: { onConfirm: () => void }) {
   const confirmed = useRef(false);
   const { gl } = useThree();
-
   useEffect(() => {
     const ctx = gl.getContext();
     console.log("[Canvas] WebGL context:", ctx?.constructor?.name ?? "unknown");
   }, [gl]);
-
   useFrame(() => {
     if (confirmed.current) return;
     confirmed.current = true;
@@ -118,7 +128,6 @@ function SceneBootConfirm({ onConfirm }: { onConfirm: () => void }) {
   return null;
 }
 
-// Shown until the 3D scene confirms its first frame.
 function BootFadeOverlay({ visible }: { visible: boolean }) {
   return (
     <div
@@ -167,19 +176,16 @@ function CoreLoopDebug() {
   const selectedNode = useTacticalStore((s) => s.selectedNode);
   const tutorialActive = useTutorialStore((s) => s.tutorialActive);
   const introComplete = useIntroStore((s) => s.introComplete);
-
   const show =
     typeof window !== "undefined" &&
     localStorage.getItem("debug_coreloop") === "1";
   if (!show) return null;
-
   const allReady = weapons.every((w) => w.status === "READY");
   const dot = (ok: boolean, label: string) => (
     <span key={label} style={{ color: ok ? "#0f8" : "#f80", marginRight: 6 }}>
       {ok ? "\u25cf" : "\u25cb"} {label}
     </span>
   );
-
   return (
     <div
       style={{
@@ -210,7 +216,13 @@ function CoreLoopDebug() {
   );
 }
 
-function DiagnosticsTrigger({ onOpen }: { onOpen: () => void }) {
+function DiagnosticsTrigger({
+  onOpen,
+  isLandscape,
+}: {
+  onOpen: () => void;
+  isLandscape: boolean;
+}) {
   return (
     <button
       type="button"
@@ -218,8 +230,9 @@ function DiagnosticsTrigger({ onOpen }: { onOpen: () => void }) {
       title="Diagnostics"
       style={{
         position: "fixed",
-        bottom: 72,
-        left: 8,
+        bottom: isLandscape ? 80 : 72,
+        left: isLandscape ? "auto" : 8,
+        right: isLandscape ? 8 : "auto",
         zIndex: 9997,
         width: 28,
         height: 28,
@@ -241,16 +254,171 @@ function DiagnosticsTrigger({ onOpen }: { onOpen: () => void }) {
   );
 }
 
+function GlobeViewport({
+  viewportRef,
+  sceneReady,
+  handleSceneReady,
+  isLandscape,
+}: {
+  viewportRef: React.RefObject<HTMLDivElement | null>;
+  sceneReady: boolean;
+  handleSceneReady: () => void;
+  isLandscape: boolean;
+}) {
+  return (
+    <div
+      ref={viewportRef}
+      data-layer="viewport"
+      style={{
+        flex: 1,
+        position: "relative",
+        overflow: "hidden",
+        minHeight: isLandscape ? "unset" : "40vh",
+        // Space background image is the sole DOM-layer background.
+        // The canvas alpha:true lets this show through where Three.js has
+        // no geometry (star gaps). Keeping it as one image avoids the
+        // dual-planet stripe issue that the tactical-planet PNG caused.
+        backgroundImage:
+          "url('/assets/generated/space-background-deep.dim_1920x1080.jpg')",
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundColor: "#000015",
+      }}
+    >
+      <BootFadeOverlay visible={!sceneReady} />
+      <HostileContactCinematic viewportRef={viewportRef} />
+
+      <HudErrorBoundary name="StatusBar">
+        <PortraitStatusBar />
+      </HudErrorBoundary>
+
+      {/*
+       * NOTE: cockpit-planet-tactical img REMOVED.
+       *
+       * That 800×800 AI-generated PNG had a hex-grid overlay baked in.
+       * It sat at zIndex:0 behind the Canvas (alpha:true), bleeding its
+       * grid lines through transparent star-field areas as vertical stripes
+       * on top of the Three.js globe. The Three.js EarthGlobe is now the
+       * only planet visual — no DOM-layer planet images in this viewport.
+       */}
+
+      {/* Globe canvas — PRIMARY interaction target (no blocking overlays) */}
+      <GlobeErrorBoundary>
+        <Canvas
+          data-layer="globe-canvas"
+          style={{ position: "absolute", inset: 0, zIndex: 1 }}
+          camera={{ fov: 55, near: 0.1, far: 200, position: [0, 0.9, 5] }}
+          gl={{ antialias: true, alpha: true }}
+          dpr={DPR}
+          onCreated={(state) => {
+            console.log("[Canvas] WebGL context created ✔");
+            console.log(
+              "[Canvas] Size:",
+              state.size.width,
+              "x",
+              state.size.height,
+            );
+          }}
+        >
+          <CameraController />
+          <SpaceBackground />
+          <EarthGlobe />
+          <ThreatManager />
+          <EnemyTargetsLayer />
+          <IncomingFireLayer />
+          <CombatEffectsLayer />
+          <SceneBootConfirm onConfirm={handleSceneReady} />
+        </Canvas>
+      </GlobeErrorBoundary>
+
+      {/* Globe area marker — no pointer interception */}
+      <div
+        data-tutorial-target="globe-area"
+        style={{
+          position: "absolute",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          width: "min(52vw, 52vh)",
+          height: "min(52vw, 52vh)",
+          borderRadius: "50%",
+          zIndex: 2,
+          pointerEvents: "none",
+        }}
+      />
+
+      {/*
+       * HUD overlay — decoration only.
+       * data-layer="hud-decoration" allows the assertion checker to verify
+       * pointer-events: none is set.
+       * Opacity reduced 0.15 → 0.08: the AI-generated scan lines in this
+       * image were visible as additional stripes at the previous opacity.
+       */}
+      <img
+        src="/assets/generated/cockpit-hud-overlay-transparent.dim_1920x1080.png"
+        alt=""
+        aria-hidden
+        data-layer="hud-decoration"
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          mixBlendMode: "screen",
+          opacity: 0.08,
+          pointerEvents: "none",
+          zIndex: 3,
+        }}
+      />
+
+      {/* Cockpit frame + canopy — decoration, must not intercept globe taps */}
+      <ShipMotionLayer
+        factor={0.55}
+        zIndex={15}
+        leanMult={1}
+        style={{ pointerEvents: "none" }}
+      >
+        <CockpitFrame />
+        <UpperCanopy />
+      </ShipMotionLayer>
+
+      <HudErrorBoundary name="ShieldHUD">
+        <PlayerShieldHUD />
+      </HudErrorBoundary>
+
+      <div
+        style={{
+          position: "absolute",
+          bottom: "clamp(12px, 3vh, 28px)",
+          left: "clamp(10px, 2.5vw, 20px)",
+          zIndex: 22,
+          pointerEvents: "none",
+        }}
+      >
+        <VelocityIndicator />
+      </div>
+
+      <HudErrorBoundary name="Radar">
+        <RadarSystem />
+      </HudErrorBoundary>
+
+      <RightDragZone widthPct={isLandscape ? 50 : 58} />
+
+      <PlayerHitFlash />
+    </div>
+  );
+}
+
 export default function TacticalStage() {
   const [diagOpen, setDiagOpen] = useState(false);
   const [sceneReady, setSceneReady] = useState(false);
-  // Use a ref so the timeout closure doesn't close over stale state
   const sceneReadyRef = useRef(false);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const isLandscape = useIsLandscape();
 
   useEffect(() => {
     console.log("[TacticalStage] mounted");
-    // Hard failsafe: if Canvas never fires first frame within 5s, release overlay
     const t = setTimeout(() => {
       if (!sceneReadyRef.current) {
         console.warn(
@@ -260,6 +428,31 @@ export default function TacticalStage() {
         setSceneReady(true);
       }
     }, 5000);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const results = runInteractionAssertions();
+      for (const result of results) {
+        if (!result.pass) {
+          console.error(
+            `[TRIPWIRE] FAIL — ${result.name}: ${result.reason} (source: ${result.source})`,
+          );
+        } else if (result.warn) {
+          console.warn(
+            `[TRIPWIRE] WARN — ${result.name}: ${result.reason} (source: ${result.source})`,
+          );
+        } else {
+          console.log(`[TRIPWIRE] PASS — ${result.name}: ${result.reason}`);
+        }
+      }
+      const fails = results.filter((r) => !r.pass).length;
+      const warns = results.filter((r) => r.pass && r.warn).length;
+      console.log(
+        `[TRIPWIRE] Summary: ${results.length - fails - warns} PASS / ${warns} WARN / ${fails} FAIL`,
+      );
+    }, 1500);
     return () => clearTimeout(t);
   }, []);
 
@@ -282,7 +475,7 @@ export default function TacticalStage() {
         width: "100%",
         height: "100dvh",
         display: "flex",
-        flexDirection: "column",
+        flexDirection: isLandscape ? "row" : "column",
         background: "#000008",
         overflow: "hidden",
         position: "relative",
@@ -294,157 +487,86 @@ export default function TacticalStage() {
       <DegradationTicker />
       <CoreLoopDebug />
 
-      {/* Main viewport */}
-      <div
-        ref={viewportRef}
-        style={{
-          flex: 1,
-          position: "relative",
-          overflow: "hidden",
-          minHeight: "40vh",
-          backgroundImage:
-            "url('/assets/generated/space-background-deep.dim_1920x1080.jpg')",
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-          backgroundColor: "#000015",
-        }}
-      >
-        {/* Boot overlay — fades once Canvas fires its first frame */}
-        <BootFadeOverlay visible={!sceneReady} />
-        <HostileContactCinematic viewportRef={viewportRef} />
+      {!isLandscape && (
+        <>
+          <GlobeViewport
+            viewportRef={viewportRef}
+            sceneReady={sceneReady}
+            handleSceneReady={handleSceneReady}
+            isLandscape={false}
+          />
+          <div style={{ position: "relative", width: "100%", flexShrink: 0 }}>
+            <div style={{ pointerEvents: "none" }}>
+              <HudErrorBoundary name="Hologram">
+                <WeaponHologramLayer />
+              </HudErrorBoundary>
+            </div>
+            <WeaponConsole />
+          </div>
+          <BottomCommandNav />
+        </>
+      )}
 
-        <HudErrorBoundary name="StatusBar">
-          <PortraitStatusBar />
-        </HudErrorBoundary>
-
-        <img
-          src="/assets/generated/cockpit-planet-tactical.dim_800x800.png"
-          alt=""
-          aria-hidden
-          style={{
-            position: "absolute",
-            top: "50%",
-            left: "50%",
-            transform: "translate(-50%, -50%)",
-            width: "min(45vw, 45vh)",
-            height: "auto",
-            mixBlendMode: "screen",
-            pointerEvents: "none",
-            zIndex: 0,
-            opacity: 0.7,
-          }}
-        />
-
-        <GlobeErrorBoundary>
-          <Canvas
-            style={{ position: "absolute", inset: 0, zIndex: 1 }}
-            camera={{ fov: 55, near: 0.1, far: 200, position: [0, 0.9, 5] }}
-            gl={{ antialias: true, alpha: true }}
-            dpr={DPR}
-            onCreated={(state) => {
-              console.log("[Canvas] WebGL context created ✔");
-              console.log(
-                "[Canvas] Size:",
-                state.size.width,
-                "x",
-                state.size.height,
-              );
+      {isLandscape && (
+        <>
+          <div
+            style={{
+              flex: "1.15",
+              display: "flex",
+              flexDirection: "column",
+              position: "relative",
+              overflow: "hidden",
             }}
           >
-            <CameraController />
-            <SpaceBackground />
-            <EarthGlobe />
-            <ThreatManager />
-            <EnemyTargetsLayer />
-            <IncomingFireLayer />
-            <CombatEffectsLayer />
-            <SceneBootConfirm onConfirm={handleSceneReady} />
-          </Canvas>
-        </GlobeErrorBoundary>
+            <GlobeViewport
+              viewportRef={viewportRef}
+              sceneReady={sceneReady}
+              handleSceneReady={handleSceneReady}
+              isLandscape={true}
+            />
+          </div>
+          <div
+            style={{
+              flex: "0.75",
+              display: "flex",
+              flexDirection: "column",
+              background: "rgba(0,3,12,0.97)",
+              borderLeft: "1px solid rgba(0,200,255,0.12)",
+              overflow: "hidden",
+              position: "relative",
+            }}
+          >
+            <div style={{ pointerEvents: "none", flexShrink: 0 }}>
+              <HudErrorBoundary name="Hologram">
+                <WeaponHologramLayer />
+              </HudErrorBoundary>
+            </div>
+            <div style={{ flexShrink: 0 }}>
+              <WeaponConsole />
+            </div>
+            <div style={{ marginTop: "auto" }}>
+              <BottomCommandNav />
+            </div>
+          </div>
+        </>
+      )}
 
-        <div
-          data-tutorial-target="globe-area"
-          style={{
-            position: "absolute",
-            top: "50%",
-            left: "50%",
-            transform: "translate(-50%, -50%)",
-            width: "min(52vw, 52vh)",
-            height: "min(52vw, 52vh)",
-            borderRadius: "50%",
-            zIndex: 2,
-            pointerEvents: "none",
-          }}
-        />
-
-        <img
-          src="/assets/generated/cockpit-hud-overlay-transparent.dim_1920x1080.png"
-          alt=""
-          aria-hidden
-          style={{
-            position: "absolute",
-            inset: 0,
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            mixBlendMode: "screen",
-            opacity: 0.15,
-            pointerEvents: "none",
-            zIndex: 3,
-          }}
-        />
-
-        <ShipMotionLayer factor={0.55} zIndex={15} leanMult={1}>
-          <CockpitFrame />
-          <UpperCanopy />
-        </ShipMotionLayer>
-
-        <HudErrorBoundary name="ShieldHUD">
-          <PlayerShieldHUD />
-        </HudErrorBoundary>
-
-        <div
-          style={{
-            position: "absolute",
-            bottom: "clamp(12px, 3vh, 28px)",
-            left: "clamp(10px, 2.5vw, 20px)",
-            zIndex: 22,
-            pointerEvents: "none",
-          }}
-        >
-          <VelocityIndicator />
-        </div>
-
-        <HudErrorBoundary name="Radar">
-          <RadarSystem />
-        </HudErrorBoundary>
-        <MobileJoystick />
-        <RightDragZone />
-
-        <PlayerHitFlash />
-      </div>
-
-      {/* Weapon console + hologram */}
-      <div style={{ position: "relative", width: "100%", flexShrink: 0 }}>
-        <HudErrorBoundary name="Hologram">
-          <WeaponHologramLayer />
-        </HudErrorBoundary>
-        <WeaponConsole />
-      </div>
-
-      <BottomCommandNav />
-
+      <MobileJoystick />
       <PortraitCommandDrawer />
       <TacticalLogPanel />
       <TutorialOverlay />
 
-      <DiagnosticsTrigger onOpen={() => setDiagOpen((v) => !v)} />
+      <DiagnosticsTrigger
+        onOpen={() => setDiagOpen((v) => !v)}
+        isLandscape={isLandscape}
+      />
       {diagOpen && (
         <div
           style={{
             position: "fixed",
-            bottom: 72,
-            left: 44,
+            bottom: isLandscape ? 116 : 72,
+            left: isLandscape ? "auto" : 44,
+            right: isLandscape ? 44 : "auto",
             zIndex: 9998,
             width: "min(340px, 90vw)",
             maxHeight: "60vh",
@@ -491,6 +613,9 @@ export default function TacticalStage() {
           <QaPanel />
         </div>
       )}
+
+      <InputLayerDebug />
+      <InteractionDebugShell />
 
       <style>{`
         @keyframes hitPulse {

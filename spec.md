@@ -2,66 +2,48 @@
 
 ## Current State
 
-The app is a React + Three.js spacecraft cockpit game with:
-- `systems/ElevenVoice.ts` — hybrid TTS router (ElevenLabs + browser TTS fallback). Graceful no-key fallback exists. No queue/priority/interrupt system.
-- `audio/aegisVoice.ts` — minimal browser TTS wrapper (unused path)
-- `alerts/useAlertsStore.ts` — alert/degradation system with templates. No voice calls.
-- `missions/useMissionsStore.ts` — mission/log/campaign store. No voice calls.
-- `story/useStoryStore.ts` — Phase 1 story events with A.E.G.I.S. dialogue. No voice calls.
-- `tutorial/useTutorialStore.ts` — step-based tutorial state machine. No voice calls.
-- `combat/useEnemyStore.ts` — satellite/base enemies, return fire, respawn. No cinematic triggers.
-- `intro/CinematicIntro.tsx` — existing 26s cinematic intro using `speakEleven`. Pattern reference.
-- No "Hostile Contact Detected" cinematic exists yet.
-- Standing rule: Zustand selectors must return stable references. No `.filter()` or `.map()` inside selectors.
+V19 delivered a formally modeled interaction system: explicit FSM, diagnostic shell, runtime assertions, smoke test harness, and structured observability hooks. The interaction architecture is stable.
+
+This pass (V20) fixes the raycast pipeline and rendering stack. The FSM, event bus, and debug system are untouched.
 
 ## Requested Changes (Diff)
 
 ### Add
-- `systems/useAudioQueue.ts` — audio queue store with priority, interrupt handling, and per-category locks
-- `systems/aegisVoiceLines.ts` — centralized A.E.G.I.S. voice line registry (all trigger keys + text strings)
-- `components/cinematics/HostileContactCinematic.tsx` — "Hostile Contact Detected" cinematic: camera push-in via CSS transform, UI intensity change, target emphasis overlay, voice line, auto-returns to gameplay in 3–8s
-- Wire voice trigger in `useAlertsStore.ts` — on `triggerAlert` and `resolveAlert`
-- Wire voice trigger in `useMissionsStore.ts` — on `completeMission` and mission start
-- Wire voice trigger in `useStoryStore.ts` — on each Phase 1 event trigger
-- Wire voice trigger in `useTutorialStore.ts` — on each step advance
-- Wire hostile contact cinematic in `useEnemyStore.ts` — on first enemy spawn / respawn wave
-- Mount `HostileContactCinematic` in `TacticalStage.tsx`
+- `src/frontend/src/motion/globeState.ts` — shared mutable rotation ref (`globeState.rotationY`) updated by EarthGlobe every frame and read by GlobeHitPulse + CombatEffectsLayer for world-space coordinate correction.
+- `toGlobeLocal()` and `toGlobeWorld()` utility functions in globeState.ts for Y-rotation-only coordinate transforms.
+- `TargetReticle` component inside EarthGlobe (child of globe mesh): animated ring + dot + tick marks positioned in globe-local space, auto-rotates with globe.
+- Comprehensive `[RAYCAST]` console diagnostics: canvas element, size, rect, pointer coords, NDC, object name/uuid/type/material, world hit point, globe rotation, corrected lat/lng.
 
 ### Modify
-- `systems/ElevenVoice.ts` — integrate with `useAudioQueue` for queue/priority/interrupt; keep all existing fallback logic intact
-- `systems/useShipSystemsStore.ts` — add voice call on critical subsystem degradation (if not already present)
+- **EarthGlobe.tsx** — (1) Removed secondary hit sphere (r=1.72, 16-seg) that intercepted all clicks before the globe mesh. (2) Added `useThree()` for `gl.domElement` reference. (3) Typed `handleClick` as `ThreeEvent<MouseEvent>`. (4) Inverse-rotates `e.point` by `autoRotOffset.current` (Y-axis) before computing lat/lng — converts world-space hit to globe-surface texture coordinates. (5) Sets `globeState.rotationY` every frame. (6) Globe mesh named `"EarthGlobeMesh"` and upgraded to 64x64 segments. (7) Logs canvas identity on mount.
+- **GlobeHitPulse.tsx** — Stores pulse events with `localPos` (globe-local Vector3) instead of world-space. In `useFrame` of each HitRing, applies `toGlobeWorld()` every frame so rings follow the rotating globe surface.
+- **CombatEffectsLayer.tsx** — TGT target resolution now applies `toGlobeWorld()` to convert globe-local lat/lng to current world-space position, so projectiles aim at the correct rotating surface location.
+- **TacticalStage.tsx** — (1) Removed `cockpit-planet-tactical.dim_800x800.png` img: this AI-generated PNG had a hex-grid baked in and bled through the alpha:true canvas as vertical stripes. (2) Added `data-layer="hud-decoration"` to HUD overlay img. (3) Reduced HUD overlay opacity 0.15 → 0.08 (scan-line artifact reduction).
+- **useGlobeControls.ts** — All three `document.querySelector('canvas')` fallbacks removed. Hook now requires explicit `canvasElement: HTMLElement | null | undefined`. Logs a warning if null. Module is currently unused by any component.
 
 ### Remove
-- Nothing removed. `audio/aegisVoice.ts` kept as-is (legacy path, not breaking anything).
+- `HIT_RADIUS` constant and associated `hitMat` invisible sphere mesh from EarthGlobe.tsx.
+- `cockpit-planet-tactical` img from GlobeViewport in TacticalStage.tsx.
+- All `document.querySelector('canvas')` calls from useGlobeControls.ts.
 
 ## Implementation Plan
 
-1. **`systems/aegisVoiceLines.ts`** — registry of all trigger keys mapped to voice line text. Categories: `alert`, `mission`, `story`, `tutorial`, `combat`, `cinematic`. Includes `hostile_contact_detected` key.
+1. Create `globeState.ts` with shared rotation ref and transform utilities.
+2. Rewrite EarthGlobe.tsx: remove hit sphere, use ThreeEvent typing, add rotation compensation, add TargetReticle as globe child, add diagnostic logging.
+3. Fix GlobeHitPulse.tsx: switch to globe-local pulse positions, apply world rotation per-frame in HitRing.
+4. Fix CombatEffectsLayer.tsx: apply globe rotation to TGT target world-space resolution.
+5. Fix TacticalStage.tsx: remove tactical-planet img, add data-layer attr, reduce HUD overlay opacity.
+6. Fix useGlobeControls.ts: remove document.querySelector fallbacks, require explicit canvas.
+7. Validate with frontend build.
 
-2. **`systems/useAudioQueue.ts`** — Zustand store:
-   - Queue of `{ id, text, eventKey, priority, interruptible }` items
-   - Priority levels: `CRITICAL=4`, `HIGH=3`, `NORMAL=2`, `LOW=1`
-   - `enqueue(item)` — inserts by priority, dedupes by eventKey
-   - `interrupt(item)` — stops current, plays immediately
-   - `processNext()` — pops highest priority item, calls `speakHybrid`, marks playing
-   - `onVoiceComplete()` — advances queue
-   - No `.filter()` or `.map()` in selectors
+## Validation Checklist
 
-3. **`systems/ElevenVoice.ts`** — replace direct `speakHybrid` calls in stores with `enqueue`/`interrupt` from the queue. Keep ElevenLabs fetch + fallback logic unchanged.
-
-4. **Store wiring (alerts/missions/story/tutorial)** — each store action that should trigger voice calls `enqueueVoice(eventKey, text, priority)` after its state mutation. Never inside selectors.
-
-5. **`components/cinematics/HostileContactCinematic.tsx`**:
-   - Triggered by `useCinematicStore` flag `hostileContactActive`
-   - Renders as `position: absolute` overlay inside existing viewport (no viewport takeover)
-   - Phase 1 (0–0.5s): target highlight ring appears on active enemy position
-   - Phase 2 (0.5–2s): viewport container gets a subtle scale(1.04) + translateY(-8px) push-in via CSS transition
-   - Phase 3 (0.5s): UI intensity boost — alert bar glows brighter, reticle sharpens, vignette deepens
-   - Phase 4 (1s): A.E.G.I.S. voice line fires via `interrupt()` — "Hostile contact detected. Weapons free."
-   - Phase 5 (3–5s): camera eases back to normal transform
-   - Phase 6 (5–8s): cinematic flag clears, full player control restored
-   - Returns cleanup function on unmount
-
-6. **`useEnemyStore.ts`** — on first satellite activation (session start) and on enemy respawn wave, set `hostileContactActive = true` in cinematic store.
-
-7. **`TacticalStage.tsx`** — mount `<HostileContactCinematic />` inside the viewport container. Apply camera transform to viewport wrapper div based on cinematic store state.
+- [ ] Different taps produce different `[RAYCAST] Lat/Lng` log entries
+- [ ] Reticle ring appears and follows tapped globe surface location as globe rotates
+- [ ] No vertical stripe artifact from tactical-planet grid overlay
+- [ ] HUD overlay scan lines are below perception threshold at 8% opacity
+- [ ] `[RAYCAST] Globe mesh confirmed ✔` logged on every tap (no hit-sphere intercept)
+- [ ] `[RAYCAST] Canvas` logs show correct R3F gl.domElement dimensions
+- [ ] GlobeHitPulse rings stay on globe surface as globe rotates
+- [ ] Projectile effects (CombatEffectsLayer) aim at correct surface location after globe rotation
+- [ ] FSM, event bus, and debug shell unchanged

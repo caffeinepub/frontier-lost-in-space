@@ -1,7 +1,12 @@
 /**
- * RightDragZone — Invisible touch-capture zone for the right half of the screen.
+ * RightDragZone — Invisible touch-capture zone for globe rotation.
  *
- * KEY FIX: Lazy pointer capture.
+ * V17.1 CHANGES:
+ * - Accepts optional `widthPct` prop (default 58). In landscape, TacticalStage
+ *   passes a smaller value so the zone stays within the globe column only.
+ * - data-layer attribute added for InputLayerDebug.
+ *
+ * KEY BEHAVIOR: Lazy pointer capture.
  * - On pointerDown we do NOT call setPointerCapture.
  * - We only capture once movement exceeds TAP_THRESHOLD (confirmed drag).
  * - Short taps fall through to the underlying Three.js canvas so globe clicks work.
@@ -31,7 +36,12 @@ interface DragState {
   isDrag: boolean;
 }
 
-export default function RightDragZone() {
+interface Props {
+  /** Percentage of viewport width covered (default 58). */
+  widthPct?: number;
+}
+
+export default function RightDragZone({ widthPct = 58 }: Props) {
   const dragRef = useRef<DragState | null>(null);
 
   const tutorialActive = useTutorialStore((s) => s.tutorialActive);
@@ -95,6 +105,7 @@ export default function RightDragZone() {
 
   return (
     <div
+      data-layer="right-drag"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -105,7 +116,7 @@ export default function RightDragZone() {
         top: 0,
         // Exclude bottom ~22% to leave weapon HUD safe
         height: "78%",
-        width: "58%",
+        width: `${widthPct}%`,
         zIndex: 20,
         touchAction: "none",
         WebkitUserSelect: "none",
