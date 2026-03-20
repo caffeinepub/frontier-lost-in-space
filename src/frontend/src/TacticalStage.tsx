@@ -7,7 +7,7 @@
  *   ├──────────────────┤
  *   │   3D Canvas        │  ← Globe + stars + cockpit
  *   ├──────────────────┤
- *   │ WeaponControlDeck │  ← PULSE / RAIL / MISSILE
+ *   │  WeaponConsole    │  ← Cinematic PULSE / RAIL / MISSILE / FIRE
  *   ├──────────────────┤
  *   │ BottomCommandNav  │  ← CMD SCAN WPN SHIP LOG
  *   └──────────────────┘
@@ -45,7 +45,7 @@ import ThreatManager from "./components/game/ThreatManager";
 import TutorialOverlay from "./components/game/TutorialOverlay";
 import UpperCanopy from "./components/game/UpperCanopy";
 import VelocityIndicator from "./components/game/VelocityIndicator";
-import WeaponControlDeck from "./components/game/WeaponControlDeck";
+import WeaponConsole from "./components/game/WeaponConsole";
 import { useTacticalStore } from "./hooks/useTacticalStore";
 import { useIntroStore } from "./intro/useIntroStore";
 import { useShipMovementSetup } from "./motion/useShipMovementSetup";
@@ -249,7 +249,9 @@ export default function TacticalStage() {
         <PlayerHitFlash />
       </div>
 
-      <WeaponControlDeck portrait />
+      {/* Cinematic AAA weapon console — replaces WeaponControlDeck */}
+      <WeaponConsole />
+
       <BottomCommandNav />
 
       <PortraitCommandDrawer />
