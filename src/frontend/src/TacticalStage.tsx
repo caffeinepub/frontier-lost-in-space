@@ -12,26 +12,28 @@
  *   │ BottomCommandNav  │  ← CMD SCAN WPN SHIP LOG
  *   └──────────────────┘
  *
- * Globe notes:
- *   - Canvas dpr is capped at min(devicePixelRatio, 2) to reduce GPU load on
- *     high-DPR mobile screens
- *   - GlobeErrorBoundary wraps the Canvas so a render fault cannot black-screen
- *   - data-tutorial-target="globe-area" sits as a pointer-events:none DOM overlay
- *     over the canvas so TutorialOverlay can spotlight it without stealing input
+ * Phase 2 additions inside Canvas:
+ *   - EnemyTargetsLayer  (satellites + bases)
+ *   - IncomingFireLayer  (enemy projectiles toward player)
  *
- * CoreLoopDebug strip:
- *   Visible only when localStorage.debug_coreloop === '1'
+ * Phase 2 additions in DOM:
+ *   - PlayerShieldHUD   (shield/hull bars)
+ *   - PlayerHitFlash    (screen-pulse on damage)
  */
 import { Canvas } from "@react-three/fiber";
 import { useEffect, useRef } from "react";
+import { usePlayerStore } from "./combat/usePlayerStore";
 import { useWeaponsStore } from "./combat/useWeapons";
 import BottomCommandNav from "./components/game/BottomCommandNav";
 import CameraController from "./components/game/CameraController";
 import CockpitFrame from "./components/game/CockpitFrame";
 import CombatEffectsLayer from "./components/game/CombatEffectsLayer";
 import EarthGlobe from "./components/game/EarthGlobe";
+import EnemyTargetsLayer from "./components/game/EnemyTargetsLayer";
 import { GlobeErrorBoundary } from "./components/game/GlobeErrorBoundary";
+import IncomingFireLayer from "./components/game/IncomingFireLayer";
 import MobileJoystick from "./components/game/MobileJoystick";
+import PlayerShieldHUD from "./components/game/PlayerShieldHUD";
 import PortraitCommandDrawer from "./components/game/PortraitCommandDrawer";
 import PortraitStatusBar from "./components/game/PortraitStatusBar";
 import RadarSystem from "./components/game/RadarSystem";
@@ -50,7 +52,6 @@ import { useShipMovementSetup } from "./motion/useShipMovementSetup";
 import { useTacticalLogStore } from "./tacticalLog/useTacticalLogStore";
 import { useTutorialStore } from "./tutorial/useTutorialStore";
 
-// Cap device pixel ratio to 2 to reduce GPU load on high-DPR mobile screens
 const DPR: [number, number] = [1, 2];
 
 // Weapons cooldown rAF loop
@@ -69,7 +70,6 @@ function WeaponsTick() {
   return null;
 }
 
-// Tutorial auto-start is disabled — user triggers manually from CMD panel
 function TutorialBootstrap() {
   const pendingTutorialStart = useIntroStore((s) => s.pendingTutorialStart);
   const consumeTutorialStart = useIntroStore((s) => s.consumeTutorialStart);
@@ -88,8 +88,28 @@ function GameBootstrap() {
     const add = useTacticalLogStore.getState().addEntry;
     add({ type: "system", message: "A.E.G.I.S. TACTICAL COMMAND ONLINE" });
     add({ type: "system", message: "ALL SYSTEMS NOMINAL" });
+    add({ type: "system", message: "ORBITAL THREATS DETECTED — ENGAGE" });
   }, []);
   return null;
+}
+
+/** Full-screen red flash when player takes a hit. */
+function PlayerHitFlash() {
+  const hitFlash = usePlayerStore((s) => s.hitFlash);
+  if (!hitFlash) return null;
+  return (
+    <div
+      style={{
+        position: "absolute",
+        inset: 0,
+        zIndex: 50,
+        pointerEvents: "none",
+        background: "rgba(255,30,0,0.18)",
+        boxShadow: "inset 0 0 60px rgba(255,0,0,0.35)",
+        animation: "hitPulse 0.4s ease-out forwards",
+      }}
+    />
+  );
 }
 
 /** Lightweight QA strip — only visible when localStorage.debug_coreloop='1' */
@@ -169,7 +189,6 @@ export default function TacticalStage() {
           minHeight: 0,
         }}
       >
-        {/* Globe error boundary — render failure shows fallback, not black screen */}
         <GlobeErrorBoundary>
           <Canvas
             style={{ position: "absolute", inset: 0, zIndex: 1 }}
@@ -181,14 +200,12 @@ export default function TacticalStage() {
             <SpaceBackground />
             <EarthGlobe />
             <ThreatManager />
+            <EnemyTargetsLayer />
+            <IncomingFireLayer />
             <CombatEffectsLayer />
           </Canvas>
         </GlobeErrorBoundary>
 
-        {/*
-          Globe hit-zone DOM overlay — pointer-events:none so it never steals
-          input from the Three.js canvas. Used by TutorialOverlay spotlight only.
-        */}
         <div
           data-tutorial-target="globe-area"
           style={{
@@ -209,6 +226,9 @@ export default function TacticalStage() {
           <UpperCanopy />
         </ShipMotionLayer>
 
+        {/* Shield + Hull bars — top-left of globe area */}
+        <PlayerShieldHUD />
+
         <div
           style={{
             position: "absolute",
@@ -224,6 +244,9 @@ export default function TacticalStage() {
         <RadarSystem />
         <MobileJoystick />
         <RightDragZone />
+
+        {/* Player hit flash overlay */}
+        <PlayerHitFlash />
       </div>
 
       <WeaponControlDeck portrait />
@@ -232,6 +255,14 @@ export default function TacticalStage() {
       <PortraitCommandDrawer />
       <TacticalLogPanel />
       <TutorialOverlay />
+
+      {/* Hit pulse animation */}
+      <style>{`
+        @keyframes hitPulse {
+          0%   { opacity: 1; }
+          100% { opacity: 0; }
+        }
+      `}</style>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { useTacticalStore } from "../hooks/useTacticalStore";
 import { triggerBattleJolt } from "../motion/shipMotionEngine";
 import { useCombatState } from "./useCombatState";
 import type { WeaponType } from "./useCombatState";
+import { useEnemyStore } from "./useEnemyStore";
 import { useThreatStore } from "./useThreatStore";
 
 export type WeaponStatus = "READY" | "COOLDOWN" | "RELOADING";
@@ -178,20 +179,20 @@ export const useWeaponsStore = create<WeaponsStore>((set, get) => ({
 
     // Log the fire event
     useTacticalStore.getState().pushEventLog({
-      msg: `${weapon.name} FIRED → ${selectedNode}`,
+      msg: `${weapon.name} FIRED \u2192 ${selectedNode}`,
       type: "fire",
     });
 
-    // Push to tactical log store (lazy import avoids circular)
     import("../tacticalLog/useTacticalLogStore").then(
       ({ useTacticalLogStore }) => {
         useTacticalLogStore.getState().addEntry({
           type: "combat",
-          message: `${weapon.name} FIRED → ${selectedNode}`,
+          message: `${weapon.name} FIRED \u2192 ${selectedNode}`,
         });
       },
     );
 
+    // ─── Damage logic per target type ───────────────────────────────────────
     if (selectedNode.startsWith("THREAT-")) {
       const { interceptThreat } = useThreatStore.getState();
       interceptThreat(selectedNode, weapon.type as "pulse" | "railgun" | "emp");
@@ -215,6 +216,35 @@ export const useWeaponsStore = create<WeaponsStore>((set, get) => ({
             useTacticalLogStore.getState().addEntry({
               type: "combat",
               message: `TARGET DESTROYED: ${selectedNode}`,
+            });
+          },
+        );
+      }
+    }
+
+    // Enemy satellite or base
+    if (selectedNode.startsWith("SAT-") || selectedNode.startsWith("BASE-")) {
+      useEnemyStore.getState().damageEnemy(selectedNode, weapon.type);
+
+      const updatedEnemy = useEnemyStore
+        .getState()
+        .enemies.find((e) => e.id === selectedNode);
+      if (updatedEnemy?.status === "destroyed") {
+        setDestructionEvent({
+          targetId: selectedNode,
+          startTime: performance.now(),
+          weaponType: weapon.type,
+        });
+        triggerBattleJolt(weapon.type, true);
+        useTacticalStore.getState().pushEventLog({
+          msg: `ENEMY DESTROYED: ${selectedNode}`,
+          type: "destroy",
+        });
+        import("../tacticalLog/useTacticalLogStore").then(
+          ({ useTacticalLogStore }) => {
+            useTacticalLogStore.getState().addEntry({
+              type: "combat",
+              message: `ENEMY DESTROYED: ${updatedEnemy?.label ?? selectedNode}`,
             });
           },
         );

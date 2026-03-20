@@ -1,7 +1,8 @@
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import { NODE_IDS, NODE_POSITIONS, latLngToVec3 } from "../../GlobeCore";
+import { NODE_POSITIONS } from "../../GlobeCore";
 import { useCombatState } from "../../combat/useCombatState";
+import { useEnemyStore } from "../../combat/useEnemyStore";
 import { useThreatStore } from "../../combat/useThreatStore";
 import { useWeaponsStore } from "../../combat/useWeapons";
 import { useTacticalStore } from "../../hooks/useTacticalStore";
@@ -23,28 +24,34 @@ import {
 
 /**
  * Resolve a targetId to a world-space THREE.Vector3.
- * Handles three target types:
- *  - NODE-xx   → fixed globe surface node
- *  - TGT-xxxx  → coordinate target from globe tap (via globeTarget in tactical store)
+ * Handles four target types:
+ *  - NODE-xx    → fixed globe surface node
+ *  - TGT-xxxx   → coordinate target from globe tap
  *  - THREAT-xxx → asteroid threat interpolated world position
+ *  - SAT-xxx    → enemy satellite (position from useEnemyStore)
+ *  - BASE-xxx   → planetary base (position from useEnemyStore)
  */
 function resolveTargetPos(nodeId: string): THREE.Vector3 | null {
-  // Fixed globe nodes
-  const nodeIdx = NODE_IDS.indexOf(nodeId);
-  if (nodeIdx >= 0) {
-    const [lat, lng] = NODE_POSITIONS[nodeIdx];
-    const [x, y, z] = latLngToVec3(lat, lng, 1.53);
-    return new THREE.Vector3(x, y, z);
+  // Fixed globe nodes (Record<id, Vec3>)
+  const nodePos = NODE_POSITIONS[nodeId];
+  if (nodePos) {
+    return nodePos.clone().multiplyScalar(1.53);
   }
 
   // Globe coordinate target (TGT-xxxx)
   if (nodeId.startsWith("TGT-")) {
     const gt = useTacticalStore.getState().globeTarget;
-    if (gt) {
-      const [x, y, z] = latLngToVec3(gt.lat, gt.lng, 1.53);
-      return new THREE.Vector3(x, y, z);
+    if (gt?.lat !== undefined && gt?.lng !== undefined) {
+      // Use same formula as GlobeCore.latLngToVec3
+      const phi = (90 - gt.lat) * (Math.PI / 180);
+      const theta = (gt.lng + 180) * (Math.PI / 180);
+      return new THREE.Vector3(
+        -1.53 * Math.sin(phi) * Math.cos(theta),
+        1.53 * Math.cos(phi),
+        1.53 * Math.sin(phi) * Math.sin(theta),
+      );
     }
-    // Fallback: fire forward toward globe center
+    // Fallback: fire toward globe center from ship
     const ship = useShipStore.getState();
     const r = ship.orbitalRadius;
     const cx = r * Math.cos(ship.orbitalPhi) * Math.sin(ship.orbitalTheta);
@@ -81,6 +88,14 @@ function resolveTargetPos(nodeId: string): THREE.Vector3 | null {
     }
   }
 
+  // Enemy satellite or base (SAT-xxx / BASE-xxx)
+  if (nodeId.startsWith("SAT-") || nodeId.startsWith("BASE-")) {
+    const enemy = useEnemyStore.getState().enemies.find((e) => e.id === nodeId);
+    if (enemy) {
+      return new THREE.Vector3(enemy.px, enemy.py, enemy.pz);
+    }
+  }
+
   return null;
 }
 
@@ -97,7 +112,6 @@ export default function CombatEffectsLayer() {
     ? resolveTargetPos(firingEffect.targetId)
     : null;
 
-  // Compute ship origin once per render (captured by projectile components via originPos prop)
   const originPos = firingEffect ? getShipOriginWorld() : undefined;
 
   return (

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useWeaponsStore } from "../../combat/useWeapons";
 import { useTacticalStore } from "../../hooks/useTacticalStore";
 /**
@@ -6,8 +7,42 @@ import { useTacticalStore } from "../../hooks/useTacticalStore";
  * Contains:
  *   - Tutorial launcher (opt-in, never auto-starts)
  *   - System status overview
+ *   - Build notes / recent fixes log
  */
 import { useTutorialStore } from "../../tutorial/useTutorialStore";
+
+const BUILD_NOTES = [
+  {
+    version: "v5 — Structure Audit",
+    items: [
+      "Audited and reorganized all files by responsibility",
+      "Removed 3 dead/duplicate files (ElevenVoice, StorageClient, WeaponDeck)",
+      "Created PROJECT_MAP.md as canonical sitemap + responsibility reference",
+      "Flagged architecture risks: god component, stub panels, split weapon state",
+    ],
+  },
+  {
+    version: "v4 — Globe Optimization",
+    items: [
+      "Fixed atmosphere/glow shells intercepting globe click events",
+      "Added wide invisible hit-mesh for fat-finger tap tolerance on mobile",
+      "Fixed RadarSystem rAF loop restart-every-frame bug",
+      "Memoized all 4 EarthGlobe materials",
+      "Capped canvas DPR, reduced geometry, halved star count on mobile",
+      "Added GlobeErrorBoundary — globe failures no longer black-screen the app",
+    ],
+  },
+  {
+    version: "v3 — Core Recovery",
+    items: [
+      "Fixed weapons permanently stuck in COOLDOWN — WeaponsTick rAF loop added",
+      "Tutorial auto-start disabled — opt-in via CMD panel only",
+      "Intro bypass fallback added — no more intro state traps",
+      "Skip button shows immediately on intro screen",
+      "Tutorial step guards added — stuck steps surface skip option",
+    ],
+  },
+];
 
 export default function CommandPanel() {
   const startTutorial = useTutorialStore((s) => s.startTutorial);
@@ -15,6 +50,7 @@ export default function CommandPanel() {
   const tutorialComplete = useTutorialStore((s) => s.tutorialComplete);
   const weapons = useWeaponsStore((s) => s.weapons);
   const selectedNode = useTacticalStore((s) => s.selectedNode);
+  const [notesOpen, setNotesOpen] = useState(false);
 
   const allWeaponsReady = weapons.every((w) => w.status === "READY");
   const targetLocked = !!selectedNode;
@@ -59,11 +95,18 @@ export default function CommandPanel() {
             ok={allWeaponsReady}
           />
           <StatusRow label="CORE LOOP" value="NOMINAL" ok={true} />
+          <StatusRow label="RADAR" value="ACTIVE" ok={true} />
+          <StatusRow label="GLOBE" value="STABLE" ok={true} />
         </div>
       </div>
 
       {/* Section: Tutorial — opt-in only */}
-      <div>
+      <div
+        style={{
+          borderBottom: "1px solid rgba(0,150,200,0.2)",
+          paddingBottom: 10,
+        }}
+      >
         <div
           style={{
             fontSize: "clamp(7px, 1vw, 9px)",
@@ -129,6 +172,96 @@ export default function CommandPanel() {
         >
           Optional calibration walkthrough. Can be exited at any time.
         </div>
+      </div>
+
+      {/* Section: Build Notes */}
+      <div>
+        <button
+          type="button"
+          onClick={() => setNotesOpen((v) => !v)}
+          style={{
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            padding: 0,
+            fontFamily: "monospace",
+            WebkitTapHighlightColor: "transparent",
+          }}
+        >
+          <span
+            style={{
+              fontSize: "clamp(7px, 1vw, 9px)",
+              letterSpacing: "0.3em",
+              color: "rgba(0,180,220,0.5)",
+            }}
+          >
+            BUILD NOTES
+          </span>
+          <span
+            style={{
+              fontSize: 9,
+              color: "rgba(0,160,200,0.5)",
+              transform: notesOpen ? "rotate(180deg)" : "rotate(0deg)",
+              transition: "transform 0.2s",
+              display: "inline-block",
+            }}
+          >
+            ▾
+          </span>
+        </button>
+
+        {notesOpen && (
+          <div
+            style={{
+              marginTop: 8,
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+            }}
+          >
+            {BUILD_NOTES.map((note) => (
+              <div key={note.version}>
+                <div
+                  style={{
+                    fontSize: "clamp(7px, 0.95vw, 9px)",
+                    letterSpacing: "0.18em",
+                    color: "rgba(0,220,180,0.7)",
+                    marginBottom: 4,
+                  }}
+                >
+                  {note.version}
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 3,
+                  }}
+                >
+                  {note.items.map((item) => (
+                    <div
+                      key={item}
+                      style={{
+                        fontSize: "clamp(7px, 0.85vw, 8px)",
+                        letterSpacing: "0.08em",
+                        color: "rgba(0,160,200,0.55)",
+                        lineHeight: 1.5,
+                        paddingLeft: 10,
+                        borderLeft: "1px solid rgba(0,140,180,0.2)",
+                      }}
+                    >
+                      {item}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
