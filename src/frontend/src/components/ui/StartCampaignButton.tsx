@@ -1,17 +1,17 @@
-import { useGameState } from "../../state/useGameState";
+import { useIntroStore } from "../../intro/useIntroStore";
 
 export default function StartCampaignButton() {
-  const setMode = useGameState((s) => s.setMode);
+  const triggerNewGame = useIntroStore((s) => s.triggerNewGame);
 
   const handleStart = () => {
-    console.log("[GameMode] START HERE clicked → intro");
+    console.log("[GameMode] START HERE clicked → triggerNewGame()");
     const overlay = document.getElementById("fade-overlay");
     if (overlay) {
       overlay.style.opacity = "1";
     }
     setTimeout(() => {
-      setMode("intro");
-      // Fade the overlay back out after the new scene has mounted
+      triggerNewGame(); // sets introPlaying: true — CinematicIntro will mount
+      // Fade the overlay back out so the cinematic is visible
       setTimeout(() => {
         const el = document.getElementById("fade-overlay");
         if (el) el.style.opacity = "0";

@@ -148,7 +148,13 @@ export default function App() {
   const phase = useBootStore((s) => s.phase);
   const bootStarted = useRef(false);
   const initRef = useRef(false);
-  const introWasPlayingRef = useRef(introPlaying);
+
+  // ── Track the PREVIOUS value of introComplete so we can detect the
+  //    false → true transition that means the cinematic just finished.
+  //    (The old introWasPlayingRef approach failed because it was set
+  //    once at mount and never updated when triggerNewGame() flipped
+  //    introPlaying false → true → false mid-session.)
+  const prevIntroCompleteRef = useRef(introComplete);
 
   // ── Boot trace — logs every render with current mode ─────────────────────
   bootTrace(`App render — mode: ${mode}`);
@@ -156,27 +162,28 @@ export default function App() {
     `[GameState] App render — mode: ${mode} | introPlaying: ${introPlaying} | introComplete: ${introComplete}`,
   );
 
-  // ── [FLOW] Log every mode transition ────────────────────────────────────────
+  // ── [FLOW] Log every mode transition ──────────────────────────────────────
   useEffect(() => {
     console.log("[FLOW] mode changed to:", mode);
   }, [mode]);
 
   // ── Auto-transition: CinematicIntro ends → campaign intro ────────────────
+  //    Fires when introComplete flips from false → true while the player
+  //    is still on the menu (i.e. the cinematic just finished or was skipped
+  //    after clicking START HERE).
   useEffect(() => {
-    if (
-      introWasPlayingRef.current &&
-      !introPlaying &&
-      introComplete &&
-      mode === "menu"
-    ) {
+    const wasComplete = prevIntroCompleteRef.current;
+    prevIntroCompleteRef.current = introComplete;
+
+    if (!wasComplete && introComplete && mode === "menu") {
       console.log(
         "[FLOW] CinematicIntro complete → auto-launching campaign intro",
       );
       setMode("intro");
     }
-  }, [introPlaying, introComplete, mode, setMode]);
+  }, [introComplete, mode, setMode]);
 
-  // ── App mounted — init stores ────────────────────────────────────────────
+  // ── App mounted — init stores ─────────────────────────────────────────────
   useEffect(() => {
     bootTrace("App mounted");
   }, []);
@@ -236,6 +243,8 @@ export default function App() {
           position: "relative",
         }}
       >
+        {/* CinematicIntro mounts whenever introPlaying is true —
+            this now includes manual triggers from START HERE */}
         {introPlaying && <CinematicIntro />}
 
         {!introPlaying && (
@@ -319,9 +328,6 @@ export default function App() {
             {/* IntroSequence overlays TacticalStage during intro mode */}
             {mode === "intro" && <IntroSequence />}
 
-            {/* Suppress "unused" warning — game mode renders TacticalStage only */}
-            {introComplete && mode === "game" ? null : null}
-
             {/* ── CATCH-ALL — unexpected / undefined mode ────────────────── */}
             {mode !== "menu" && mode !== "intro" && mode !== "game" && (
               <UnmatchedModeFallback mode={mode} />
@@ -333,10 +339,8 @@ export default function App() {
       </div>
 
       <GameModeDebug mode={mode} />
-      {/* Game state debug overlay — activate: localStorage.setItem('debug_gamestate','1') */}
       <GameStateDebugOverlay />
       <DiagnosticHUD />
-      {/* Physics engine debug — activate: localStorage.setItem('debug_physics','1') */}
       <SpacePhysicsDebug />
     </>
   );
