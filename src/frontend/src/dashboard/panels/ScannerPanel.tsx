@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CEP_LEVELS, useCEPStore } from "../../cep/useCEPStore";
 import { useEnemyStore } from "../../combat/useEnemyStore";
 import { useTacticalStore } from "../../hooks/useTacticalStore";
 import { useMissionsStore } from "../../missions/useMissionsStore";
@@ -94,6 +95,83 @@ function RadarSweep() {
   );
 }
 
+// ── CEP anomaly row (read-only) ───────────────────────────────────────────
+
+function CEPAnomalyRow() {
+  const level = useCEPStore((s) => s.level);
+  const isActive = useCEPStore((s) => s.isActive);
+
+  if (!isActive) return null;
+
+  const def = CEP_LEVELS[level];
+  const scanDetail =
+    level === 1
+      ? "Unclassified broadcast pattern. Below alert threshold."
+      : level === 2
+        ? "Behavioural data harvest in progress. Source unknown."
+        : level === 3
+          ? "Active signal disruption. Targeting fidelity degraded."
+          : level === 4
+            ? "Countermeasure deployment confirmed. Hull sensors affected."
+            : "FULL PROTOCOL EXECUTION. All sensor channels compromised.";
+
+  return (
+    <div
+      style={{
+        background: "rgba(15,3,3,0.7)",
+        border: `1px solid ${def.color}`,
+        borderRadius: 3,
+        padding: "6px 8px",
+        animation: level >= 4 ? "cepPulse 2s ease-in-out infinite" : "none",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          marginBottom: 3,
+        }}
+      >
+        <span
+          style={{
+            fontSize: 8,
+            color: def.color,
+            letterSpacing: "0.1em",
+            fontFamily: "monospace",
+          }}
+        >
+          CEP {def.code} — {def.label}
+        </span>
+        <span
+          style={{
+            fontSize: 7,
+            color: "rgba(0,160,200,0.5)",
+            fontFamily: "monospace",
+          }}
+        >
+          SYSTEM
+        </span>
+      </div>
+      <div
+        style={{
+          fontSize: 7,
+          color: "rgba(180,200,220,0.65)",
+          fontFamily: "monospace",
+          letterSpacing: "0.04em",
+        }}
+      >
+        {scanDetail}
+      </div>
+      <style>{`
+        @keyframes cepPulse {
+          0%, 100% { box-shadow: 0 0 4px rgba(255,40,40,0.2); }
+          50%       { box-shadow: 0 0 12px rgba(255,40,40,0.5); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 export default function ScannerPanel() {
   const enemies = useEnemyStore((s) => s.enemies);
   const selectedNode = useTacticalStore((s) => s.selectedNode);
@@ -111,6 +189,12 @@ export default function ScannerPanel() {
   const handleScan = () => {
     if (scanning) return;
     setScanning(true);
+    // Record CEP interaction
+    import("../../cep/useCEPStore")
+      .then(({ useCEPStore: s }) => {
+        s.getState().recordInteraction("scan");
+      })
+      .catch(() => {});
     setTimeout(() => {
       const unrevealed = anomalies.filter((a) => !a.revealed);
       if (unrevealed.length > 0) {
@@ -145,7 +229,7 @@ export default function ScannerPanel() {
         gap: 10,
       }}
     >
-      {/* Radar and scan trigger */}
+      {/* Radar + scan trigger */}
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <RadarSweep />
         <div style={{ flex: 1 }}>
@@ -284,72 +368,42 @@ export default function ScannerPanel() {
 
       {/* Summary */}
       <div style={{ display: "flex", gap: 10 }}>
-        <div
-          style={{
-            flex: 1,
-            background: "rgba(0,20,40,0.5)",
-            borderRadius: 3,
-            padding: "5px 8px",
-            border: "1px solid rgba(0,100,140,0.2)",
-          }}
-        >
+        {[
+          {
+            label: "SATELLITES",
+            val: satellites.length,
+            color: "rgba(0,180,255,0.5)",
+            valColor: "rgba(0,200,255,0.9)",
+          },
+          {
+            label: "BASES",
+            val: bases.length,
+            color: "rgba(255,160,60,0.5)",
+            valColor: "rgba(255,160,60,0.9)",
+          },
+          {
+            label: "CLEARED",
+            val: enemies.filter((e) => e.status === "destroyed").length,
+            color: "rgba(0,220,180,0.5)",
+            valColor: "rgba(0,220,180,0.9)",
+          },
+        ].map((item) => (
           <div
+            key={item.label}
             style={{
-              fontSize: 7,
-              color: "rgba(0,180,255,0.5)",
-              marginBottom: 2,
+              flex: 1,
+              background: "rgba(0,20,40,0.5)",
+              borderRadius: 3,
+              padding: "5px 8px",
+              border: "1px solid rgba(0,100,140,0.2)",
             }}
           >
-            SATELLITES
+            <div style={{ fontSize: 7, color: item.color, marginBottom: 2 }}>
+              {item.label}
+            </div>
+            <div style={{ fontSize: 11, color: item.valColor }}>{item.val}</div>
           </div>
-          <div style={{ fontSize: 11, color: "rgba(0,200,255,0.9)" }}>
-            {satellites.length}
-          </div>
-        </div>
-        <div
-          style={{
-            flex: 1,
-            background: "rgba(0,20,40,0.5)",
-            borderRadius: 3,
-            padding: "5px 8px",
-            border: "1px solid rgba(0,100,140,0.2)",
-          }}
-        >
-          <div
-            style={{
-              fontSize: 7,
-              color: "rgba(255,160,60,0.5)",
-              marginBottom: 2,
-            }}
-          >
-            BASES
-          </div>
-          <div style={{ fontSize: 11, color: "rgba(255,160,60,0.9)" }}>
-            {bases.length}
-          </div>
-        </div>
-        <div
-          style={{
-            flex: 1,
-            background: "rgba(0,20,40,0.5)",
-            borderRadius: 3,
-            padding: "5px 8px",
-            border: "1px solid rgba(0,100,140,0.2)",
-          }}
-        >
-          <div
-            style={{
-              fontSize: 7,
-              color: "rgba(0,220,180,0.5)",
-              marginBottom: 2,
-            }}
-          >
-            CLEARED
-          </div>
-          <div style={{ fontSize: 11, color: "rgba(0,220,180,0.9)" }}>
-            {enemies.filter((e) => e.status === "destroyed").length}
-          </div>
-        </div>
+        ))}
       </div>
 
       {/* Mission signals */}
@@ -400,6 +454,9 @@ export default function ScannerPanel() {
           ANOMALIES DETECTED
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {/* CEP anomaly — system-only, read-only, no interaction */}
+          <CEPAnomalyRow />
+
           {anomalies.map((ano) => (
             <div
               key={ano.id}

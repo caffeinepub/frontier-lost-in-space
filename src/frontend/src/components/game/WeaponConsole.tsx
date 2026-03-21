@@ -29,6 +29,7 @@ import type { Weapon } from "../../combat/useWeapons";
 import { initAudio, playDischargeBurst } from "../../combat/weaponSynth";
 import { useTacticalStore } from "../../hooks/useTacticalStore";
 import { useTutorialStore } from "../../tutorial/useTutorialStore";
+import FireControlGrid from "./FireControlGrid";
 import WeaponMissTapFeedback from "./WeaponMissTapFeedback";
 
 // ─── Utility helpers ──────────────────────────────────────────────────────────────
@@ -1587,12 +1588,19 @@ export default function WeaponConsole() {
             />
           )}
 
-          <FireButton
+          <FireControlGrid
             hasTarget={hasTarget}
             onFire={fireSelected}
             onAutoAcquireAndFire={handleAutoAcquireAndFire}
             selectedWeaponStatus={selectedWeapon?.status ?? "READY"}
-          />
+          >
+            <FireButton
+              hasTarget={hasTarget}
+              onFire={fireSelected}
+              onAutoAcquireAndFire={handleAutoAcquireAndFire}
+              selectedWeaponStatus={selectedWeapon?.status ?? "READY"}
+            />
+          </FireControlGrid>
 
           {railWeapon && empWeapon ? (
             <WeaponCluster

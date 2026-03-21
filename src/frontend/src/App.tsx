@@ -1,19 +1,13 @@
 import { Component, type ReactNode, useEffect, useRef, useState } from "react";
 import TacticalStage from "./TacticalStage";
+import DiagnosticHUD from "./components/debug/DiagnosticHUD";
+import CockpitOverlay from "./components/game/CockpitOverlay";
 import IntroSequence from "./components/game/IntroSequence";
+import MenuBackground from "./components/game/MenuBackground";
 import StartCampaignButton from "./components/ui/StartCampaignButton";
 import CinematicIntro from "./intro/CinematicIntro";
 import { useIntroStore } from "./intro/useIntroStore";
 import { useGameState } from "./state/useGameState";
-
-// Pre-computed star positions for the menu background (stable keys)
-const MENU_STARS = Array.from({ length: 120 }, (_, i) => ({
-  id: `s${i.toString().padStart(3, "0")}`,
-  cx: (i * 137.508) % 100,
-  cy: (i * 97.324) % 100,
-  r: (0.1 + ((i * 3.7) % 0.25)).toFixed(3),
-  opacity: (0.2 + ((i * 0.42) % 0.6)).toFixed(2),
-}));
 
 // ─── Root error boundary ──────────────────────────────────────────────────────
 interface EBState {
@@ -191,6 +185,20 @@ export default function App() {
         }
       `}</style>
 
+      {/* Global fade overlay — driven by StartCampaignButton */}
+      <div
+        id="fade-overlay"
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "black",
+          opacity: 0,
+          transition: "opacity 0.9s ease",
+          pointerEvents: "none",
+          zIndex: 9999,
+        }}
+      />
+
       <div
         style={{
           width: "100%",
@@ -207,7 +215,7 @@ export default function App() {
         {/* Mode-based routing — only active when legacy intro is NOT playing */}
         {!introPlaying && (
           <>
-            {/* MENU — show title + START CAMPAIGN button */}
+            {/* MENU */}
             {mode === "menu" && (
               <div
                 style={{
@@ -215,90 +223,95 @@ export default function App() {
                   width: "100%",
                   height: "100dvh",
                   background: "#000010",
+                  overflow: "hidden",
                 }}
               >
-                {/* Deep-space star field (lightweight SVG) */}
-                <svg
-                  aria-hidden="true"
+                <MenuBackground />
+
+                <div
                   style={{
                     position: "absolute",
                     inset: 0,
-                    width: "100%",
-                    height: "100%",
+                    background: "rgba(0,0,8,0.45)",
                     pointerEvents: "none",
+                    zIndex: 2,
                   }}
-                  viewBox="0 0 100 100"
-                  preserveAspectRatio="xMidYMid slice"
-                >
-                  {MENU_STARS.map((s) => (
-                    <circle
-                      key={s.id}
-                      cx={s.cx}
-                      cy={s.cy}
-                      r={s.r}
-                      fill="white"
-                      opacity={s.opacity}
-                    />
-                  ))}
-                </svg>
+                />
 
-                {/* FRONTIER title */}
                 <div
                   style={{
                     position: "absolute",
-                    top: "30%",
-                    left: "50%",
-                    transform: "translateX(-50%)",
-                    fontFamily: "monospace",
-                    color: "rgba(0,200,255,0.25)",
-                    letterSpacing: "0.5em",
-                    fontSize: "clamp(14px,2vw,22px)",
-                    whiteSpace: "nowrap",
+                    inset: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
                     pointerEvents: "none",
+                    zIndex: 10,
                   }}
                 >
-                  FRONTIER
-                </div>
-                <div
-                  style={{
-                    position: "absolute",
-                    top: "calc(30% + 40px)",
-                    left: "50%",
-                    transform: "translateX(-50%)",
-                    fontFamily: "monospace",
-                    color: "rgba(0,150,200,0.15)",
-                    letterSpacing: "0.3em",
-                    fontSize: "clamp(8px,1vw,11px)",
-                    whiteSpace: "nowrap",
-                    pointerEvents: "none",
-                  }}
-                >
-                  LOST IN SPACE
-                </div>
+                  <div
+                    style={{
+                      fontFamily: "monospace",
+                      color: "rgba(220,240,255,0.92)",
+                      letterSpacing: "0.55em",
+                      fontSize: "clamp(22px, 4.5vw, 56px)",
+                      fontWeight: 700,
+                      whiteSpace: "nowrap",
+                      textShadow:
+                        "0 0 32px rgba(0,200,255,0.45), 0 2px 4px rgba(0,0,0,0.8)",
+                      lineHeight: 1,
+                    }}
+                  >
+                    FRONTIER
+                  </div>
 
-                <StartCampaignButton />
+                  <div
+                    style={{
+                      marginTop: "10px",
+                      fontFamily: "monospace",
+                      color: "rgba(80,190,120,0.72)",
+                      letterSpacing: "0.38em",
+                      fontSize: "clamp(9px, 1.4vw, 16px)",
+                      whiteSpace: "nowrap",
+                      textShadow: "0 0 12px rgba(60,200,100,0.25)",
+                      lineHeight: 1,
+                    }}
+                  >
+                    LOST IN SPACE
+                  </div>
+
+                  <div style={{ pointerEvents: "auto" }}>
+                    <StartCampaignButton />
+                  </div>
+                </div>
               </div>
             )}
 
-            {/* INTRO — placeholder sequence */}
-            {mode === "intro" && <IntroSequence />}
-
-            {/* GAME — full tactical stage (existing path) */}
-            {mode === "game" && (
+            {/*
+              BUG FIX: TacticalStage now renders for BOTH intro and game modes.
+              This ensures the cockpit is visible while the intro overlay plays —
+              the player wakes up inside the ship, not a black void.
+            */}
+            {(mode === "intro" || mode === "game") && (
               <GameRootErrorBoundary>
                 <TacticalStage />
               </GameRootErrorBoundary>
             )}
 
-            {/* Returning player path: introComplete but still on menu → stay in menu */}
-            {/* When introComplete is true and mode hasn't been advanced yet, */}
-            {/* the player sees the menu as normal. */}
-            {introComplete && mode === "game" && null /* handled above */}
+            {/* INTRO overlay — semi-transparent, cockpit shows through */}
+            {mode === "intro" && <IntroSequence />}
+
+            {introComplete && mode === "game" && null}
           </>
         )}
+
+        {/* Cockpit atmosphere — always on top of game content, never blocks input */}
+        <CockpitOverlay />
       </div>
 
       <GameModeDebug mode={mode} />
+      <DiagnosticHUD />
     </>
   );
 }

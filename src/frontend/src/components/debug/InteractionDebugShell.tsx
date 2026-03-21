@@ -26,6 +26,8 @@ import { useWeaponZoneStore } from "../../combat/useWeaponZoneStore";
 import { globalFSM } from "../../interaction/InteractionStateMachine";
 import { runInteractionAssertions } from "../../interaction/interactionAssertions";
 import { useInteractionStore } from "../../interaction/useInteractionStore";
+import { useIntroEventEngine } from "../../intro/useIntroEventEngine";
+import { usePlayerMemoryStore } from "../../memory/usePlayerMemoryStore";
 import {
   NAV_TRANSITION_TABLE,
   globalNavMode,
@@ -35,6 +37,7 @@ import {
   useNavGateStore,
 } from "../../navigation/useNavGateStore";
 import { useNavigationModeStore } from "../../navigation/useNavigationModeStore";
+
 import { runInteractionModelTests } from "../../tests/interactionModelTests";
 import { runAllSmokeTests } from "../../tests/smokeTests";
 
@@ -458,6 +461,64 @@ function WeaponZonesSection() {
   );
 }
 
+// ─── Intro Engine Section ────────────────────────────────────────────────────────────
+function IntroEngineSection() {
+  const idx = useIntroEventEngine((s) => s.introEventIndex);
+  const complete = useIntroEventEngine((s) => s.introSequenceComplete);
+  const adaptive = useIntroEventEngine((s) => s.adaptiveUnlocked);
+  const phase = useIntroEventEngine((s) => s.currentIntroPhase);
+  const lastId = useIntroEventEngine((s) => s.lastEventId);
+  const lastCEP = useIntroEventEngine((s) => s.lastCEPDelta);
+  const lastChoice = useIntroEventEngine((s) => s.lastChoiceLabel);
+  const memOk = useIntroEventEngine((s) => s.memoryWriteSuccess);
+  const voiceOn = useIntroEventEngine((s) => s.voiceActive);
+  const initialized = useIntroEventEngine((s) => s.isInitialized);
+
+  const totalDecisions = usePlayerMemoryStore((s) => s.totalDecisions);
+  const totalShown = usePlayerMemoryStore((s) => s.totalEventsShown);
+  const traits = usePlayerMemoryStore((s) => s.traitScores);
+
+  return (
+    <>
+      <SectionHeader title="── INTRO ENGINE ──────────────────────" />
+      <Row
+        label="initialized"
+        value={initialized ? "YES" : "NO"}
+        warn={!initialized}
+      />
+      <Row label="intro event index" value={`${idx} / 14`} />
+      <Row label="intro phase" value={phase ?? "---"} />
+      <Row label="last event id" value={lastId ?? "---"} />
+      <Row label="last choice" value={lastChoice ?? "---"} />
+      <Row label="last cep delta" value={String(lastCEP)} warn={lastCEP > 1} />
+      <Row
+        label="memory write"
+        value={memOk ? "OK" : totalDecisions === 0 ? "NONE YET" : "FAIL"}
+        warn={!memOk && totalDecisions > 0}
+      />
+      <Row label="voice active" value={voiceOn ? "SPEAKING" : "IDLE"} />
+      <Row
+        label="adaptive locked"
+        value={adaptive ? "UNLOCKED" : "LOCKED"}
+        warn={!adaptive && complete}
+      />
+      <Row
+        label="sequence complete"
+        value={complete ? "YES ✅" : `NO (${idx}/15)`}
+      />
+      <SectionHeader title="── PLAYER MEMORY ────────────────────" />
+      <Row label="events shown" value={String(totalShown)} />
+      <Row label="decisions made" value={String(totalDecisions)} />
+      <Row label="risk_tolerance" value={String(traits.risk_tolerance ?? 50)} />
+      <Row label="curiosity" value={String(traits.curiosity ?? 50)} />
+      <Row label="system_trust" value={String(traits.system_trust ?? 50)} />
+      <Row label="aggression" value={String(traits.aggression ?? 50)} />
+      <Row label="tool_affinity" value={String(traits.tool_affinity ?? 50)} />
+      <Row label="patience" value={String(traits.patience ?? 50)} />
+    </>
+  );
+}
+
 export default function InteractionDebugShell() {
   const shouldShow =
     typeof window !== "undefined" &&
@@ -805,6 +866,9 @@ export default function InteractionDebugShell() {
                 </div>
               ))}
           </div>
+
+          {/* Intro Engine + Memory */}
+          <IntroEngineSection />
 
           {/* Weapon Zones */}
           <WeaponZonesSection />

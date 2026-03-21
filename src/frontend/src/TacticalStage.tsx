@@ -4,31 +4,24 @@
  * V17.1: Landscape layout, pointer-events audit, InputLayerDebug.
  * V19:   InteractionDebugShell, runInteractionAssertions on mount.
  * V20:   Raycast + rendering fixes.
- *   - Removed cockpit-planet-tactical img.
- *     ROOT CAUSE OF STRIPE ARTIFACT: This AI-generated PNG has a hex-grid
- *     overlay and was positioned at zIndex:0 behind the Canvas (alpha:true).
- *     SpaceBackground renders stars/particles — it does not fill the entire
- *     canvas with a solid colour. The transparent canvas areas showed the
- *     tactical-planet grid through, creating vertical stripe / moiré patterns
- *     on top of the Three.js globe. Removed entirely; the Three.js EarthGlobe
- *     is the sole planet visual.
- *   - HUD overlay: added data-layer="hud-decoration" and reduced opacity 0.15→0.08.
- *     The generated HUD overlay contains scan lines. At 15% opacity with
- *     mixBlendMode:screen these appeared as additional stripes. Reduced.
- * V20 (Nav Mode):
- *   - NavigationModeHUD mounted in GlobeViewport (pointer-events:none overlay)
- *   - globalNavMode initialized to orbitObservation on GameBootstrap
- *   - Nav mode system sits ABOVE the interaction FSM; does NOT modify it
+ * V20 (Nav Mode): NavigationModeHUD, globalNavMode initialization.
+ * V27 (Narrative): NarrativeEventPanel + NarrativeController.
+ * V31 (Tutorial Gate): TutorialBootstrap replaced with TutorialPromptModal.
+ *   Tutorial never auto-starts. Player is always asked first.
  */
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useRef, useState } from "react";
 import { useAlertsStore } from "./alerts/useAlertsStore";
+import CEPHudAlert from "./cep/CEPHudAlert";
+import CEPSystemController from "./cep/CEPSystemController";
+import { useCEPStore } from "./cep/useCEPStore";
 import { useEnemyStore } from "./combat/useEnemyStore";
 import { usePlayerStore } from "./combat/usePlayerStore";
 import { useWeaponsStore } from "./combat/useWeapons";
 import { HostileContactCinematic } from "./components/cinematics/HostileContactCinematic";
 import InteractionDebugShell from "./components/debug/InteractionDebugShell";
 import BottomCommandNav from "./components/game/BottomCommandNav";
+import CEPStatusPanel from "./components/game/CEPStatusPanel";
 import CameraController from "./components/game/CameraController";
 import CockpitFrame from "./components/game/CockpitFrame";
 import CombatEffectsLayer from "./components/game/CombatEffectsLayer";
@@ -39,6 +32,7 @@ import { HudErrorBoundary } from "./components/game/HudErrorBoundary";
 import IncomingFireLayer from "./components/game/IncomingFireLayer";
 import InputLayerDebug from "./components/game/InputLayerDebug";
 import MobileJoystick from "./components/game/MobileJoystick";
+import NarrativeEventPanel from "./components/game/NarrativeEventPanel";
 import NavigationModeHUD from "./components/game/NavigationModeHUD";
 import PlayerShieldHUD from "./components/game/PlayerShieldHUD";
 import PortraitCommandDrawer from "./components/game/PortraitCommandDrawer";
@@ -61,9 +55,11 @@ import { useTacticalStore } from "./hooks/useTacticalStore";
 import { runInteractionAssertions } from "./interaction/interactionAssertions";
 import { useIntroStore } from "./intro/useIntroStore";
 import { useShipMovementSetup } from "./motion/useShipMovementSetup";
+import { useNarrativeStore } from "./narrative/useNarrativeStore";
 import { globalNavMode } from "./navigation/NavigationModeController";
 import { useShipSystemsStore } from "./systems/useShipSystemsStore";
 import { useTacticalLogStore } from "./tacticalLog/useTacticalLogStore";
+import TutorialPromptModal from "./tutorial/TutorialPromptModal";
 import { useTutorialStore } from "./tutorial/useTutorialStore";
 
 const DPR: [number, number] = [1, 2];
@@ -94,18 +90,6 @@ function DegradationTicker() {
   return null;
 }
 
-function TutorialBootstrap() {
-  const pendingTutorialStart = useIntroStore((s) => s.pendingTutorialStart);
-  const consumeTutorialStart = useIntroStore((s) => s.consumeTutorialStart);
-  const hasRun = useRef(false);
-  useEffect(() => {
-    if (hasRun.current || !pendingTutorialStart) return;
-    hasRun.current = true;
-    consumeTutorialStart();
-  }, [pendingTutorialStart, consumeTutorialStart]);
-  return null;
-}
-
 function GameBootstrap() {
   useShipMovementSetup();
   useEffect(() => {
@@ -115,13 +99,47 @@ function GameBootstrap() {
     add({ type: "system", message: "ALL SYSTEMS NOMINAL" });
     add({ type: "system", message: "ORBITAL THREATS DETECTED — ENGAGE" });
     useAlertsStore.getState().seedDegradationAlerts();
-
-    // Initialize navigation mode system
-    // globalNavMode starts at orbitObservation by default (no forceMode needed)
     console.log(
       `[NAV-MODE] Session initialized — mode: ${globalNavMode.currentMode}`,
     );
   }, []);
+  return null;
+}
+
+/**
+ * NarrativeController — drives phase-1 narrative events based on
+ * elapsed time and CEP level escalation.
+ */
+function NarrativeController() {
+  const cepLevel = useCEPStore((s) => s.level);
+  const firedFirstContact = useRef(false);
+  const firedCepWarning = useRef(false);
+  const firedRevelation = useRef(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (firedFirstContact.current) return;
+      firedFirstContact.current = true;
+      console.log("[NARRATIVE] Auto-triggering phase1_first_contact");
+      useNarrativeStore.getState().triggerEvent("phase1_first_contact");
+    }, 5000);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    if (cepLevel >= 2 && !firedCepWarning.current) {
+      firedCepWarning.current = true;
+      useNarrativeStore.getState().triggerEvent("phase1_cep_warning");
+    }
+  }, [cepLevel]);
+
+  useEffect(() => {
+    if (cepLevel >= 4 && !firedRevelation.current) {
+      firedRevelation.current = true;
+      useNarrativeStore.getState().triggerEvent("phase1_aegis_revelation");
+    }
+  }, [cepLevel]);
+
   return null;
 }
 
@@ -135,7 +153,7 @@ function SceneBootConfirm({ onConfirm }: { onConfirm: () => void }) {
   useFrame(() => {
     if (confirmed.current) return;
     confirmed.current = true;
-    console.log("[Canvas] First frame rendered ✔");
+    console.log("[Canvas] First frame rendered \u2714");
     onConfirm();
   });
   return null;
@@ -301,7 +319,6 @@ function GlobeViewport({
         <PortraitStatusBar />
       </HudErrorBoundary>
 
-      {/* Globe canvas — PRIMARY interaction target (no blocking overlays) */}
       <GlobeErrorBoundary>
         <Canvas
           data-layer="globe-canvas"
@@ -310,7 +327,7 @@ function GlobeViewport({
           gl={{ antialias: true, alpha: true }}
           dpr={DPR}
           onCreated={(state) => {
-            console.log("[Canvas] WebGL context created ✔");
+            console.log("[Canvas] WebGL context created \u2714");
             console.log(
               "[Canvas] Size:",
               state.size.width,
@@ -330,7 +347,6 @@ function GlobeViewport({
         </Canvas>
       </GlobeErrorBoundary>
 
-      {/* Globe area marker — no pointer interception */}
       <div
         data-tutorial-target="globe-area"
         style={{
@@ -346,10 +362,6 @@ function GlobeViewport({
         }}
       />
 
-      {/*
-       * HUD overlay — decoration only.
-       * Opacity reduced 0.15 → 0.08: scan lines in image were visible as stripes.
-       */}
       <img
         src="/assets/generated/cockpit-hud-overlay-transparent.dim_1920x1080.png"
         alt=""
@@ -368,10 +380,8 @@ function GlobeViewport({
         }}
       />
 
-      {/* Navigation Mode HUD — V20 — pointer-events:none, sits in viewport layer */}
       <NavigationModeHUD />
 
-      {/* Cockpit frame + canopy — decoration, must not intercept globe taps */}
       <ShipMotionLayer
         factor={0.55}
         zIndex={15}
@@ -381,6 +391,9 @@ function GlobeViewport({
         <CockpitFrame />
         <UpperCanopy />
       </ShipMotionLayer>
+
+      {/* CEP status panel — left edge, mid-screen */}
+      <CEPStatusPanel />
 
       <HudErrorBoundary name="ShieldHUD">
         <PlayerShieldHUD />
@@ -416,6 +429,38 @@ export default function TacticalStage() {
   const viewportRef = useRef<HTMLDivElement>(null);
   const isLandscape = useIsLandscape();
 
+  // Tutorial prompt gate — show once per session unless already decided
+  const tutorialComplete = useTutorialStore((s) => s.tutorialComplete);
+  const tutorialSkipped = useTutorialStore((s) => s.tutorialSkipped);
+  const pendingTutorialStart = useIntroStore((s) => s.pendingTutorialStart);
+  const consumeTutorialStart = useIntroStore((s) => s.consumeTutorialStart);
+  const [showTutorialPrompt, setShowTutorialPrompt] = useState(false);
+  const promptDecidedRef = useRef(false);
+
+  // Decide whether to show the prompt on mount (after a short settling delay)
+  useEffect(() => {
+    if (promptDecidedRef.current) return;
+    if (tutorialComplete || tutorialSkipped) {
+      // Player has already made a permanent decision — consume any pending flag
+      if (pendingTutorialStart) consumeTutorialStart();
+      return;
+    }
+    // Short delay so the cockpit can render first before overlaying the prompt
+    const t = setTimeout(() => {
+      if (promptDecidedRef.current) return;
+      promptDecidedRef.current = true;
+      if (pendingTutorialStart) consumeTutorialStart();
+      console.log("[Tutorial] Showing tutorial prompt to player");
+      setShowTutorialPrompt(true);
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [
+    tutorialComplete,
+    tutorialSkipped,
+    pendingTutorialStart,
+    consumeTutorialStart,
+  ]);
+
   useEffect(() => {
     console.log("[TacticalStage] mounted");
     const t = setTimeout(() => {
@@ -433,21 +478,23 @@ export default function TacticalStage() {
   useEffect(() => {
     const t = setTimeout(() => {
       const results = runInteractionAssertions();
+      const fails = results.filter((r) => !r.pass).length;
+      const warns = results.filter((r) => r.pass && r.warn).length;
       for (const result of results) {
         if (!result.pass) {
           console.error(
-            `[TRIPWIRE] FAIL — ${result.name}: ${result.reason} (source: ${result.source})`,
+            `[TRIPWIRE] FAIL \u2014 ${result.name}: ${result.reason} (source: ${result.source})`,
           );
         } else if (result.warn) {
           console.warn(
-            `[TRIPWIRE] WARN — ${result.name}: ${result.reason} (source: ${result.source})`,
+            `[TRIPWIRE] WARN \u2014 ${result.name}: ${result.reason} (source: ${result.source})`,
           );
         } else {
-          console.log(`[TRIPWIRE] PASS — ${result.name}: ${result.reason}`);
+          console.log(
+            `[TRIPWIRE] PASS \u2014 ${result.name}: ${result.reason}`,
+          );
         }
       }
-      const fails = results.filter((r) => !r.pass).length;
-      const warns = results.filter((r) => r.pass && r.warn).length;
       console.log(
         `[TRIPWIRE] Summary: ${results.length - fails - warns} PASS / ${warns} WARN / ${fails} FAIL`,
       );
@@ -481,9 +528,12 @@ export default function TacticalStage() {
       }}
     >
       <GameBootstrap />
-      <TutorialBootstrap />
       <WeaponsTick />
       <DegradationTicker />
+      <CEPSystemController />
+      <NarrativeController />
+      <CEPHudAlert />
+      <NarrativeEventPanel />
       <CoreLoopDebug />
 
       {!isLandscape && (
@@ -566,6 +616,16 @@ export default function TacticalStage() {
       <PortraitCommandDrawer />
       <TacticalLogPanel />
       <TutorialOverlay />
+
+      {/* Tutorial prompt — shown once on first game entry, never auto-starts */}
+      {showTutorialPrompt && (
+        <TutorialPromptModal
+          onClose={() => {
+            promptDecidedRef.current = true;
+            setShowTutorialPrompt(false);
+          }}
+        />
+      )}
 
       <DiagnosticsTrigger
         onOpen={() => setDiagOpen((v) => !v)}
