@@ -1,6 +1,7 @@
 import { Component, type ReactNode, useEffect, useRef, useState } from "react";
 import TacticalStage from "./TacticalStage";
 import DiagnosticHUD from "./components/debug/DiagnosticHUD";
+import SpacePhysicsDebug from "./components/debug/SpacePhysicsDebug";
 import CockpitOverlay from "./components/game/CockpitOverlay";
 import IntroSequence from "./components/game/IntroSequence";
 import MenuBackground from "./components/game/MenuBackground";
@@ -9,7 +10,6 @@ import CinematicIntro from "./intro/CinematicIntro";
 import { useIntroStore } from "./intro/useIntroStore";
 import { useGameState } from "./state/useGameState";
 
-// ─── Root error boundary ──────────────────────────────────────────────────────
 interface EBState {
   hasError: boolean;
   message: string;
@@ -87,7 +87,6 @@ class GameRootErrorBoundary extends Component<
   }
 }
 
-// ─── Boot screen ──────────────────────────────────────────────────────────────
 function BootScreen() {
   return (
     <div
@@ -111,7 +110,6 @@ function BootScreen() {
   );
 }
 
-// ─── Debug mode badge ─────────────────────────────────────────────────────────
 function GameModeDebug({ mode }: { mode: string }) {
   if (typeof localStorage === "undefined") return null;
   if (localStorage.getItem("debug_gamemode") !== "1") return null;
@@ -137,7 +135,6 @@ function GameModeDebug({ mode }: { mode: string }) {
   );
 }
 
-// ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const introPlaying = useIntroStore((s) => s.introPlaying);
   const introComplete = useIntroStore((s) => s.introComplete);
@@ -149,12 +146,9 @@ export default function App() {
   useEffect(() => {
     if (initRef.current) return;
     initRef.current = true;
-
     console.log("[App] Boot — initialising intro gating");
     initIntroGating();
     setStoreReady(true);
-
-    // Safety net: if after 600ms neither flag is set, force to game
     setTimeout(() => {
       const state = useIntroStore.getState();
       if (!state.introPlaying && !state.introComplete) {
@@ -169,23 +163,10 @@ export default function App() {
   return (
     <>
       <style>{`
-        html, body {
-          margin: 0;
-          padding: 0;
-          overflow: hidden;
-          width: 100%;
-          height: 100%;
-          background: #000008;
-          overscroll-behavior: none;
-          touch-action: none;
-        }
-        #root {
-          width: 100%;
-          height: 100%;
-        }
+        html, body { margin: 0; padding: 0; overflow: hidden; width: 100%; height: 100%; background: #000008; overscroll-behavior: none; touch-action: none; }
+        #root { width: 100%; height: 100%; }
       `}</style>
 
-      {/* Global fade overlay — driven by StartCampaignButton */}
       <div
         id="fade-overlay"
         style={{
@@ -209,13 +190,10 @@ export default function App() {
           position: "relative",
         }}
       >
-        {/* Existing CinematicIntro gate — preserved unchanged */}
         {introPlaying && <CinematicIntro />}
 
-        {/* Mode-based routing — only active when legacy intro is NOT playing */}
         {!introPlaying && (
           <>
-            {/* MENU */}
             {mode === "menu" && (
               <div
                 style={{
@@ -227,7 +205,6 @@ export default function App() {
                 }}
               >
                 <MenuBackground />
-
                 <div
                   style={{
                     position: "absolute",
@@ -237,7 +214,6 @@ export default function App() {
                     zIndex: 2,
                   }}
                 />
-
                 <div
                   style={{
                     position: "absolute",
@@ -265,7 +241,6 @@ export default function App() {
                   >
                     FRONTIER
                   </div>
-
                   <div
                     style={{
                       marginTop: "10px",
@@ -280,7 +255,6 @@ export default function App() {
                   >
                     LOST IN SPACE
                   </div>
-
                   <div style={{ pointerEvents: "auto" }}>
                     <StartCampaignButton />
                   </div>
@@ -288,30 +262,24 @@ export default function App() {
               </div>
             )}
 
-            {/*
-              BUG FIX: TacticalStage now renders for BOTH intro and game modes.
-              This ensures the cockpit is visible while the intro overlay plays —
-              the player wakes up inside the ship, not a black void.
-            */}
             {(mode === "intro" || mode === "game") && (
               <GameRootErrorBoundary>
                 <TacticalStage />
               </GameRootErrorBoundary>
             )}
 
-            {/* INTRO overlay — semi-transparent, cockpit shows through */}
             {mode === "intro" && <IntroSequence />}
-
             {introComplete && mode === "game" && null}
           </>
         )}
 
-        {/* Cockpit atmosphere — always on top of game content, never blocks input */}
         <CockpitOverlay />
       </div>
 
       <GameModeDebug mode={mode} />
       <DiagnosticHUD />
+      {/* Physics engine debug — activate: localStorage.setItem('debug_physics','1') */}
+      <SpacePhysicsDebug />
     </>
   );
 }

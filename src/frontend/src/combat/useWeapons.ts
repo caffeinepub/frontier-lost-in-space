@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { useTacticalStore } from "../hooks/useTacticalStore";
 import { triggerBattleJolt } from "../motion/shipMotionEngine";
+import { useSpacePhysicsStore } from "../physics/useSpacePhysicsStore";
 import { useCombatState } from "./useCombatState";
 import type { WeaponType } from "./useCombatState";
 import { useEnemyStore } from "./useEnemyStore";
@@ -163,6 +164,13 @@ export const useWeaponsStore = create<WeaponsStore>((set, get) => ({
     });
 
     triggerBattleJolt(weapon.type);
+
+    // ─── Spawn projectile in physics system ─────────────────────────────────
+    const physState = useSpacePhysicsStore.getState();
+    physState.fireProjectile(
+      physState.shipPosition,
+      { x: 0, y: 0, z: -1 }, // default forward direction; real aim direction wired later
+    );
 
     setTargetHitFlash(true);
     setScreenFlash(true);
