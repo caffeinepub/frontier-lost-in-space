@@ -61,6 +61,7 @@ import { useShipSystemsStore } from "./systems/useShipSystemsStore";
 import { useTacticalLogStore } from "./tacticalLog/useTacticalLogStore";
 import TutorialPromptModal from "./tutorial/TutorialPromptModal";
 import { useTutorialStore } from "./tutorial/useTutorialStore";
+import { bootTrace } from "./utils/bootTrace";
 
 const DPR: [number, number] = [1, 2];
 
@@ -449,9 +450,15 @@ export default function TacticalStage() {
     const t = setTimeout(() => {
       if (promptDecidedRef.current) return;
       promptDecidedRef.current = true;
-      if (pendingTutorialStart) consumeTutorialStart();
-      console.log("[Tutorial] Showing tutorial prompt to player");
-      setShowTutorialPrompt(true);
+      if (pendingTutorialStart) {
+        consumeTutorialStart();
+        // Auto-start tutorial when coming from campaign intro (no prompt needed)
+        console.log("[Tutorial] pendingTutorialStart → auto-starting tutorial");
+        useTutorialStore.getState().startTutorial();
+      } else {
+        console.log("[Tutorial] Showing tutorial prompt to player");
+        setShowTutorialPrompt(true);
+      }
     }, 1200);
     return () => clearTimeout(t);
   }, [
@@ -462,6 +469,7 @@ export default function TacticalStage() {
   ]);
 
   useEffect(() => {
+    bootTrace("TacticalStage mounted");
     console.log("[TacticalStage] mounted");
     const t = setTimeout(() => {
       if (!sceneReadyRef.current) {

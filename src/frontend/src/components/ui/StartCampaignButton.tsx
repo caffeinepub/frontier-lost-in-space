@@ -11,6 +11,11 @@ export default function StartCampaignButton() {
     }
     setTimeout(() => {
       setMode("intro");
+      // Fade the overlay back out after the new scene has mounted
+      setTimeout(() => {
+        const el = document.getElementById("fade-overlay");
+        if (el) el.style.opacity = "0";
+      }, 80);
     }, 900);
   };
 
