@@ -6,6 +6,8 @@
  *   auto-launch countdown when all 15 events are done and no new event is queued.
  * - All render branches return JSX or null — never undefined.
  * - Added data-ocid markers on all interactive surfaces.
+ * - Tutorial gate: returns null while tutorial is active so the narrative panel
+ *   never blocks tutorial interactions or fires over the tutorial overlay.
  */
 import { useEffect, useRef, useState } from "react";
 import { useTacticalStore } from "../../hooks/useTacticalStore";
@@ -19,6 +21,7 @@ import {
 } from "../../narrative/narrativeVoice";
 import { useNarrativeStore } from "../../narrative/useNarrativeStore";
 import { useGameState } from "../../state/useGameState";
+import { useTutorialStore } from "../../tutorial/useTutorialStore";
 import { bootTrace } from "../../utils/bootTrace";
 
 export default function NarrativeEventPanel() {
@@ -33,6 +36,8 @@ export default function NarrativeEventPanel() {
   const introSequenceComplete = useIntroEventEngine(
     (s) => s.introSequenceComplete,
   );
+  // Tutorial gate — hide the panel entirely while the tutorial is running
+  const tutorialActive = useTutorialStore((s) => s.tutorialActive);
 
   const [visible, setVisible] = useState(false);
   const [countdown, setCountdown] = useState(4);
@@ -51,6 +56,7 @@ export default function NarrativeEventPanel() {
       hasEvent: !!event,
       resultChoiceIndex,
       introSequenceComplete,
+      tutorialActive,
     });
   });
 
@@ -110,6 +116,11 @@ export default function NarrativeEventPanel() {
       if (countdownRef.current) clearInterval(countdownRef.current);
     };
   }, [resultChoiceIndex, event]);
+
+  // ── Tutorial gate — render nothing while tutorial is active ─────────────────
+  // This prevents the commander selection screen from appearing over the tutorial
+  // and blocking firing / interactions.
+  if (tutorialActive) return null;
 
   // ── Fallback action handlers ─────────────────────────────────────────────────
   const handleStabilize = () => {

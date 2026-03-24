@@ -10,6 +10,13 @@
  *   Tutorial never auto-starts. Player is always asked first.
  * V44 (Layout): Landscape globe takes 3/4 width, right panel 1/4 with
  *   Xbox-controller-style centering. CLR TARGET moved to FireControlGrid.
+ * V45 (Orientation): Landscape-only gate. Portrait shows rotate prompt.
+ *   MobileJoystick removed. Weapon deck fixed to normal flow in right panel.
+ * V46 (Tutorial/Narrative): NarrativeController defers first_contact until
+ *   tutorial is complete or skipped, preventing narrative panel from blocking
+ *   tutorial interactions.
+ * V47 (Bug fixes): Removed RightDragZone that was blocking globe clicks.
+ *   Fixed right panel overflow so WeaponConsole is fully visible and scrollable.
  */
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useRef, useState } from "react";
@@ -22,7 +29,6 @@ import { usePlayerStore } from "./combat/usePlayerStore";
 import { useWeaponsStore } from "./combat/useWeapons";
 import { HostileContactCinematic } from "./components/cinematics/HostileContactCinematic";
 import InteractionDebugShell from "./components/debug/InteractionDebugShell";
-import BottomCommandNav from "./components/game/BottomCommandNav";
 import CEPStatusPanel from "./components/game/CEPStatusPanel";
 import CameraController from "./components/game/CameraController";
 import CockpitFrame from "./components/game/CockpitFrame";
@@ -33,7 +39,6 @@ import { GlobeErrorBoundary } from "./components/game/GlobeErrorBoundary";
 import { HudErrorBoundary } from "./components/game/HudErrorBoundary";
 import IncomingFireLayer from "./components/game/IncomingFireLayer";
 import InputLayerDebug from "./components/game/InputLayerDebug";
-import MobileJoystick from "./components/game/MobileJoystick";
 import NarrativeEventPanel from "./components/game/NarrativeEventPanel";
 import NavigationModeHUD from "./components/game/NavigationModeHUD";
 import PlayerShieldHUD from "./components/game/PlayerShieldHUD";
@@ -41,7 +46,6 @@ import PortraitCommandDrawer from "./components/game/PortraitCommandDrawer";
 import PortraitStatusBar from "./components/game/PortraitStatusBar";
 import QaPanel from "./components/game/QaPanel";
 import RadarSystem from "./components/game/RadarSystem";
-import RightDragZone from "./components/game/RightDragZone";
 import ShipMotionLayer from "./components/game/ShipMotionLayer";
 import SpaceBackground from "./components/game/SpaceBackground";
 import TacticalLogPanel from "./components/game/TacticalLogPanel";
@@ -112,36 +116,49 @@ function GameBootstrap() {
 /**
  * NarrativeController — drives phase-1 narrative events based on
  * elapsed time and CEP level escalation.
+ *
+ * Tutorial-aware: defers first_contact until tutorial is done or skipped.
+ * While tutorialActive is true, no new narrative events are triggered,
+ * preventing the narrative panel from blocking tutorial interactions.
  */
 function NarrativeController() {
   const cepLevel = useCEPStore((s) => s.level);
+  const tutorialActive = useTutorialStore((s) => s.tutorialActive);
+  const tutorialComplete = useTutorialStore((s) => s.tutorialComplete);
+  const tutorialSkipped = useTutorialStore((s) => s.tutorialSkipped);
+  const tutorialDone = tutorialComplete || tutorialSkipped;
   const firedFirstContact = useRef(false);
   const firedCepWarning = useRef(false);
   const firedRevelation = useRef(false);
 
+  // Defer first_contact until tutorial is done (or after 5s if no tutorial)
   useEffect(() => {
+    if (tutorialActive) return; // tutorial running — wait
+    if (firedFirstContact.current) return;
+    const delay = tutorialDone ? 1500 : 5000;
     const t = setTimeout(() => {
       if (firedFirstContact.current) return;
+      if (useTutorialStore.getState().tutorialActive) return; // re-check
       firedFirstContact.current = true;
       console.log("[NARRATIVE] Auto-triggering phase1_first_contact");
       useNarrativeStore.getState().triggerEvent("phase1_first_contact");
-    }, 5000);
+    }, delay);
     return () => clearTimeout(t);
-  }, []);
+  }, [tutorialActive, tutorialDone]);
 
   useEffect(() => {
-    if (cepLevel >= 2 && !firedCepWarning.current) {
+    if (cepLevel >= 2 && !firedCepWarning.current && !tutorialActive) {
       firedCepWarning.current = true;
       useNarrativeStore.getState().triggerEvent("phase1_cep_warning");
     }
-  }, [cepLevel]);
+  }, [cepLevel, tutorialActive]);
 
   useEffect(() => {
-    if (cepLevel >= 4 && !firedRevelation.current) {
+    if (cepLevel >= 4 && !firedRevelation.current && !tutorialActive) {
       firedRevelation.current = true;
       useNarrativeStore.getState().triggerEvent("phase1_aegis_revelation");
     }
-  }, [cepLevel]);
+  }, [cepLevel, tutorialActive]);
 
   return null;
 }
@@ -250,13 +267,7 @@ function CoreLoopDebug() {
   );
 }
 
-function DiagnosticsTrigger({
-  onOpen,
-  isLandscape,
-}: {
-  onOpen: () => void;
-  isLandscape: boolean;
-}) {
+function DiagnosticsTrigger({ onOpen }: { onOpen: () => void }) {
   return (
     <button
       type="button"
@@ -264,9 +275,8 @@ function DiagnosticsTrigger({
       title="Diagnostics"
       style={{
         position: "fixed",
-        bottom: isLandscape ? 80 : 72,
-        left: isLandscape ? "auto" : 8,
-        right: isLandscape ? 8 : "auto",
+        bottom: 80,
+        right: 8,
         zIndex: 9997,
         width: 28,
         height: 28,
@@ -292,12 +302,10 @@ function GlobeViewport({
   viewportRef,
   sceneReady,
   handleSceneReady,
-  isLandscape,
 }: {
   viewportRef: React.RefObject<HTMLDivElement | null>;
   sceneReady: boolean;
   handleSceneReady: () => void;
-  isLandscape: boolean;
 }) {
   return (
     <div
@@ -307,7 +315,6 @@ function GlobeViewport({
         flex: 1,
         position: "relative",
         overflow: "hidden",
-        minHeight: isLandscape ? "unset" : "40vh",
         backgroundImage:
           "url('/assets/generated/space-background-deep.dim_1920x1080.jpg')",
         backgroundSize: "cover",
@@ -418,19 +425,90 @@ function GlobeViewport({
         <RadarSystem />
       </HudErrorBoundary>
 
-      <RightDragZone widthPct={isLandscape ? 50 : 58} />
+      {/* RightDragZone removed — joystick is gone and it was blocking globe clicks */}
 
       <PlayerHitFlash />
     </div>
   );
 }
 
-export default function TacticalStage() {
+/** Shown when device is in portrait orientation */
+function RotateToPlayGate() {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 9999,
+        background: "#000008",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 24,
+      }}
+    >
+      <span
+        style={{
+          fontSize: 64,
+          color: "rgba(0,200,255,0.7)",
+          lineHeight: 1,
+          userSelect: "none",
+          display: "inline-block",
+          animation: "rotatePrompt 2.4s ease-in-out infinite",
+        }}
+      >
+        &#x21BB;
+      </span>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 10,
+        }}
+      >
+        <span
+          style={{
+            fontFamily: "monospace",
+            fontSize: 18,
+            letterSpacing: "0.3em",
+            color: "rgba(0,200,255,0.85)",
+            userSelect: "none",
+          }}
+        >
+          ROTATE TO PLAY
+        </span>
+        <span
+          style={{
+            fontFamily: "monospace",
+            fontSize: 11,
+            color: "rgba(0,200,255,0.4)",
+            letterSpacing: "0.15em",
+            userSelect: "none",
+          }}
+        >
+          Frontier requires landscape orientation
+        </span>
+      </div>
+      <style>{`
+        @keyframes rotatePrompt {
+          0%   { transform: rotate(0deg);   opacity: 0.7; }
+          40%  { transform: rotate(90deg);  opacity: 1;   }
+          60%  { transform: rotate(90deg);  opacity: 1;   }
+          100% { transform: rotate(90deg);  opacity: 0.7; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+/** Inner component — only renders when landscape is confirmed */
+function TacticalStageInner() {
   const [diagOpen, setDiagOpen] = useState(false);
   const [sceneReady, setSceneReady] = useState(false);
   const sceneReadyRef = useRef(false);
   const viewportRef = useRef<HTMLDivElement>(null);
-  const isLandscape = useIsLandscape();
 
   // Tutorial prompt gate — show once per session unless already decided
   const tutorialComplete = useTutorialStore((s) => s.tutorialComplete);
@@ -440,21 +518,17 @@ export default function TacticalStage() {
   const [showTutorialPrompt, setShowTutorialPrompt] = useState(false);
   const promptDecidedRef = useRef(false);
 
-  // Decide whether to show the prompt on mount (after a short settling delay)
   useEffect(() => {
     if (promptDecidedRef.current) return;
     if (tutorialComplete || tutorialSkipped) {
-      // Player has already made a permanent decision — consume any pending flag
       if (pendingTutorialStart) consumeTutorialStart();
       return;
     }
-    // Short delay so the cockpit can render first before overlaying the prompt
     const t = setTimeout(() => {
       if (promptDecidedRef.current) return;
       promptDecidedRef.current = true;
       if (pendingTutorialStart) {
         consumeTutorialStart();
-        // Auto-start tutorial when coming from campaign intro (no prompt needed)
         console.log("[Tutorial] pendingTutorialStart → auto-starting tutorial");
         useTutorialStore.getState().startTutorial();
       } else {
@@ -531,7 +605,7 @@ export default function TacticalStage() {
         width: "100%",
         height: "100dvh",
         display: "flex",
-        flexDirection: isLandscape ? "row" : "column",
+        flexDirection: "row",
         background: "#000008",
         overflow: "hidden",
         position: "relative",
@@ -546,97 +620,69 @@ export default function TacticalStage() {
       <NarrativeEventPanel />
       <CoreLoopDebug />
 
-      {!isLandscape && (
-        <>
-          <GlobeViewport
-            viewportRef={viewportRef}
-            sceneReady={sceneReady}
-            handleSceneReady={handleSceneReady}
-            isLandscape={false}
-          />
-          <div style={{ position: "relative", width: "100%", flexShrink: 0 }}>
-            <div style={{ pointerEvents: "none" }}>
-              <HudErrorBoundary name="Hologram">
-                <WeaponHologramLayer />
-              </HudErrorBoundary>
-            </div>
-            <div style={{ position: "relative", pointerEvents: "none" }}>
-              <WeaponGhostLayer />
-            </div>
-            <WeaponConsole />
-          </div>
-          <BottomCommandNav />
-        </>
-      )}
+      {/* Globe column — ~75% of screen width */}
+      <div
+        style={{
+          flex: "3",
+          display: "flex",
+          flexDirection: "column",
+          position: "relative",
+          overflow: "hidden",
+        }}
+      >
+        <GlobeViewport
+          viewportRef={viewportRef}
+          sceneReady={sceneReady}
+          handleSceneReady={handleSceneReady}
+        />
+      </div>
 
-      {isLandscape && (
-        <>
-          {/* Globe column — ~75% of screen width */}
-          <div
-            style={{
-              flex: "3",
-              display: "flex",
-              flexDirection: "column",
-              position: "relative",
-              overflow: "hidden",
-            }}
-          >
-            <GlobeViewport
-              viewportRef={viewportRef}
-              sceneReady={sceneReady}
-              handleSceneReady={handleSceneReady}
-              isLandscape={true}
-            />
-          </div>
+      {/* Right control panel — ~25% of screen, weapon controls in normal flow */}
+      <div
+        style={{
+          flex: "1",
+          background: "rgba(0,3,12,0.97)",
+          borderLeft: "1px solid rgba(0,200,255,0.12)",
+          overflowY: "auto",
+          overflowX: "hidden",
+          WebkitOverflowScrolling: "touch",
+          position: "relative",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "flex-start",
+          height: "100%",
+          padding: "8px 4px",
+          gap: "8px",
+        }}
+      >
+        <div style={{ pointerEvents: "none", flexShrink: 0, width: "100%" }}>
+          <HudErrorBoundary name="Hologram">
+            <WeaponHologramLayer />
+          </HudErrorBoundary>
+        </div>
+        <div
+          style={{
+            position: "relative",
+            pointerEvents: "none",
+            flexShrink: 0,
+            width: "100%",
+          }}
+        >
+          <WeaponGhostLayer />
+        </div>
+        {/* WeaponConsole must remain interactive — no pointerEvents override */}
+        <div style={{ flexShrink: 0, width: "100%" }}>
+          <WeaponConsole />
+        </div>
+        {/* BottomCommandNav is portrait-only — NOT rendered in landscape */}
+      </div>
 
-          {/* Right control panel — ~25% of screen width, Xbox-controller style */}
-          <div
-            style={{
-              flex: "1",
-              background: "rgba(0,3,12,0.97)",
-              borderLeft: "1px solid rgba(0,200,255,0.12)",
-              overflow: "hidden",
-              position: "relative",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: "8px 0",
-            }}
-          >
-            <div
-              style={{ pointerEvents: "none", flexShrink: 0, width: "100%" }}
-            >
-              <HudErrorBoundary name="Hologram">
-                <WeaponHologramLayer />
-              </HudErrorBoundary>
-            </div>
-            <div
-              style={{
-                position: "relative",
-                pointerEvents: "none",
-                flexShrink: 0,
-                width: "100%",
-              }}
-            >
-              <WeaponGhostLayer />
-            </div>
-            <div style={{ flexShrink: 0, width: "100%" }}>
-              <WeaponConsole />
-            </div>
-            <div style={{ width: "100%" }}>
-              <BottomCommandNav />
-            </div>
-          </div>
-        </>
-      )}
-
-      <MobileJoystick />
+      {/* PortraitCommandDrawer kept for drawer state continuity but won't show in landscape */}
       <PortraitCommandDrawer />
       <TacticalLogPanel />
       <TutorialOverlay />
 
-      {/* Tutorial prompt — shown once on first game entry, never auto-starts */}
       {showTutorialPrompt && (
         <TutorialPromptModal
           onClose={() => {
@@ -646,17 +692,13 @@ export default function TacticalStage() {
         />
       )}
 
-      <DiagnosticsTrigger
-        onOpen={() => setDiagOpen((v) => !v)}
-        isLandscape={isLandscape}
-      />
+      <DiagnosticsTrigger onOpen={() => setDiagOpen((v) => !v)} />
       {diagOpen && (
         <div
           style={{
             position: "fixed",
-            bottom: isLandscape ? 116 : 72,
-            left: isLandscape ? "auto" : 44,
-            right: isLandscape ? 44 : "auto",
+            bottom: 116,
+            right: 44,
             zIndex: 9998,
             width: "min(340px, 90vw)",
             maxHeight: "60vh",
@@ -715,4 +757,15 @@ export default function TacticalStage() {
       `}</style>
     </div>
   );
+}
+
+export default function TacticalStage() {
+  const isLandscape = useIsLandscape();
+
+  // Gate: landscape-only game — show rotate prompt in portrait
+  if (!isLandscape) {
+    return <RotateToPlayGate />;
+  }
+
+  return <TacticalStageInner />;
 }

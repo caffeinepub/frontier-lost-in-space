@@ -317,6 +317,11 @@ function PortraitWeaponDeck() {
   );
 }
 
+/**
+ * LandscapeWeaponDeck — rendered inside the right control panel as a
+ * normal-flow child (no absolute positioning) so it is always visible
+ * in fullscreen landscape mode.
+ */
 function LandscapeWeaponDeck() {
   const firingEffect = useCombatState((s) => s.firingEffect);
   const screenFlash = useCombatState((s) => s.screenFlash);
@@ -330,7 +335,17 @@ function LandscapeWeaponDeck() {
           ? "rgba(80,160,255,0.11)"
           : "rgba(0,255,180,0.07)";
   return (
-    <>
+    <div
+      style={{
+        position: "relative",
+        width: "100%",
+        display: "flex",
+        justifyContent: "center",
+        zIndex: 35,
+        padding: "4px 0",
+        pointerEvents: "auto",
+      }}
+    >
       {screenFlash && (
         <div
           style={{
@@ -355,23 +370,12 @@ function LandscapeWeaponDeck() {
           }}
         />
       )}
-      <div
-        style={{
-          position: "absolute",
-          bottom: "clamp(10px, 2.2vh, 24px)",
-          left: "50%",
-          transform: "translateX(-50%)",
-          zIndex: 35,
-          pointerEvents: "auto",
-        }}
-      >
-        <WeaponRow />
-      </div>
+      <WeaponRow />
       <style>{`
         @keyframes wpill-flash  { 0% { opacity: 1; } 100% { opacity: 0; } }
         @keyframes wpill-shield { 0% { opacity: 1; } 30% { opacity: 0.5; } 100% { opacity: 0; } }
       `}</style>
-    </>
+    </div>
   );
 }
 
