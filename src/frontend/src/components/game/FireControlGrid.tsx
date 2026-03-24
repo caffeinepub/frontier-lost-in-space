@@ -8,6 +8,7 @@
  *
  * CEP moved to a dedicated left-side panel (CEPStatusPanel).
  * Bottom-left cell now shows PROX (enemy proximity / distance).
+ * CLR TARGET button appears below the grid when a target is locked.
  *
  * STABLE SELECTOR RULES (FRONTIER mandate):
  *   All selectors return raw primitives only — no derived arrays/objects.
@@ -18,6 +19,7 @@ import type React from "react";
 import { useEnemyStore } from "../../combat/useEnemyStore";
 import { usePlayerStore } from "../../combat/usePlayerStore";
 import { useWeaponsStore } from "../../combat/useWeapons";
+import { useTacticalStore } from "../../hooks/useTacticalStore";
 import { useNavigationModeStore } from "../../navigation/useNavigationModeStore";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -156,6 +158,7 @@ export default function FireControlGrid({
   // ── Stable primitive selectors (Frontier mandate) ──
   const shield = usePlayerStore((s) => s.shield);
   const hull = usePlayerStore((s) => s.hull);
+  const clearNode = useTacticalStore((s) => s.clearNode);
 
   // enemies is a raw array reference — derive active count in body
   const enemies = useEnemyStore((s) => s.enemies);
@@ -232,6 +235,35 @@ export default function FireControlGrid({
         <DataCell label="NAV" value={navStr} />
         <DataCell label="HULL" value={hullStr} valueColor={hullColor} />
       </div>
+
+      {/* CLR TARGET — shown below grid when a target is locked */}
+      {hasTarget && (
+        <div
+          style={{ display: "flex", justifyContent: "center", marginTop: 4 }}
+        >
+          <button
+            type="button"
+            data-ocid="console.delete_button"
+            onClick={clearNode}
+            style={{
+              fontFamily: "monospace",
+              fontSize: 8,
+              letterSpacing: "0.18em",
+              color: "rgba(255,100,100,0.7)",
+              background: "rgba(40,0,0,0.5)",
+              border: "1px solid rgba(255,80,80,0.25)",
+              borderRadius: 3,
+              cursor: "pointer",
+              padding: "3px 12px",
+              pointerEvents: "auto",
+              WebkitTapHighlightColor: "transparent",
+              minHeight: 28,
+            }}
+          >
+            CLR TARGET
+          </button>
+        </div>
+      )}
     </>
   );
 }

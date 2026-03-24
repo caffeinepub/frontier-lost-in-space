@@ -109,7 +109,6 @@ export default function LeftPanel() {
   const nodeData = useTacticalStore((s) => s.nodeData);
   const scanMode = useTacticalStore((s) => s.scanMode);
   const threats = useThreatStore((s) => s.threats);
-  const clearNode = useTacticalStore((s) => s.clearNode);
 
   const activeThreats = threats.filter(
     (t) => t.status !== "DESTROYED" && t.status !== "SURVIVED",
@@ -199,7 +198,7 @@ export default function LeftPanel() {
               style={{
                 marginTop: 6,
                 display: "flex",
-                justifyContent: "space-between",
+                justifyContent: "center",
                 alignItems: "center",
               }}
             >
@@ -215,22 +214,6 @@ export default function LeftPanel() {
               >
                 ◉ LOCKED
               </div>
-              <button
-                type="button"
-                onClick={clearNode}
-                style={{
-                  fontFamily: "monospace",
-                  fontSize: 7,
-                  letterSpacing: "0.12em",
-                  color: "rgba(0,160,200,0.5)",
-                  background: "transparent",
-                  border: "none",
-                  cursor: "pointer",
-                  padding: "1px 4px",
-                }}
-              >
-                CLR
-              </button>
             </div>
           </>
         ) : (

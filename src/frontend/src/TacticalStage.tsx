@@ -8,6 +8,8 @@
  * V27 (Narrative): NarrativeEventPanel + NarrativeController.
  * V31 (Tutorial Gate): TutorialBootstrap replaced with TutorialPromptModal.
  *   Tutorial never auto-starts. Player is always asked first.
+ * V44 (Layout): Landscape globe takes 3/4 width, right panel 1/4 with
+ *   Xbox-controller-style centering. CLR TARGET moved to FireControlGrid.
  */
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useRef, useState } from "react";
@@ -569,9 +571,10 @@ export default function TacticalStage() {
 
       {isLandscape && (
         <>
+          {/* Globe column — ~75% of screen width */}
           <div
             style={{
-              flex: "1.15",
+              flex: "3",
               display: "flex",
               flexDirection: "column",
               position: "relative",
@@ -585,18 +588,25 @@ export default function TacticalStage() {
               isLandscape={true}
             />
           </div>
+
+          {/* Right control panel — ~25% of screen width, Xbox-controller style */}
           <div
             style={{
-              flex: "0.75",
-              display: "flex",
-              flexDirection: "column",
+              flex: "1",
               background: "rgba(0,3,12,0.97)",
               borderLeft: "1px solid rgba(0,200,255,0.12)",
               overflow: "hidden",
               position: "relative",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "8px 0",
             }}
           >
-            <div style={{ pointerEvents: "none", flexShrink: 0 }}>
+            <div
+              style={{ pointerEvents: "none", flexShrink: 0, width: "100%" }}
+            >
               <HudErrorBoundary name="Hologram">
                 <WeaponHologramLayer />
               </HudErrorBoundary>
@@ -606,14 +616,15 @@ export default function TacticalStage() {
                 position: "relative",
                 pointerEvents: "none",
                 flexShrink: 0,
+                width: "100%",
               }}
             >
               <WeaponGhostLayer />
             </div>
-            <div style={{ flexShrink: 0 }}>
+            <div style={{ flexShrink: 0, width: "100%" }}>
               <WeaponConsole />
             </div>
-            <div style={{ marginTop: "auto" }}>
+            <div style={{ width: "100%" }}>
               <BottomCommandNav />
             </div>
           </div>
