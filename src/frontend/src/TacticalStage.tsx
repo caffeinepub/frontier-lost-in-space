@@ -43,6 +43,7 @@ import IncomingFireLayer from "./components/game/IncomingFireLayer";
 import InputLayerDebug from "./components/game/InputLayerDebug";
 import NarrativeEventPanel from "./components/game/NarrativeEventPanel";
 import NavigationModeHUD from "./components/game/NavigationModeHUD";
+import PillControlOverlay from "./components/game/PillControlOverlay";
 import PlayerShieldHUD from "./components/game/PlayerShieldHUD";
 import PortraitCommandDrawer from "./components/game/PortraitCommandDrawer";
 import PortraitStatusBar from "./components/game/PortraitStatusBar";
@@ -55,9 +56,6 @@ import ThreatManager from "./components/game/ThreatManager";
 import TutorialOverlay from "./components/game/TutorialOverlay";
 import UpperCanopy from "./components/game/UpperCanopy";
 import VelocityIndicator from "./components/game/VelocityIndicator";
-import WeaponConsole from "./components/game/WeaponConsole";
-import WeaponGhostLayer from "./components/game/WeaponGhostLayer";
-import WeaponHologramLayer from "./components/game/WeaponHologramLayer";
 import { useIsLandscape } from "./hooks/useIsLandscape";
 import { useTacticalStore } from "./hooks/useTacticalStore";
 import { runInteractionAssertions } from "./interaction/interactionAssertions";
@@ -366,60 +364,6 @@ function RotateToPlayGate() {
   );
 }
 
-/**
- * OverlayControlPanel — bottom-right weapon + fire controls.
- *
- * Inspired by top mobile games:
- * - Anchored to bottom-right with safe-area padding
- * - Semi-transparent so the globe shows through
- * - Scale via clamp() for consistent size across devices
- * - pointer-events: auto only on interactive children
- */
-function OverlayControlPanel() {
-  return (
-    <div
-      style={{
-        position: "absolute",
-        bottom: 0,
-        right: 0,
-        zIndex: 40,
-        // Safe area for iPhone notch / home indicator
-        paddingBottom: "max(8px, env(safe-area-inset-bottom))",
-        paddingRight: "max(8px, env(safe-area-inset-right))",
-        // Scale the whole panel proportionally — clamp prevents too-small on phone
-        width: "clamp(240px, 30vw, 360px)",
-        // Subtle dark gradient so controls are readable but globe shows through
-        background:
-          "linear-gradient(135deg, rgba(0,4,12,0.0) 0%, rgba(0,4,12,0.55) 40%, rgba(0,4,12,0.75) 100%)",
-        borderTop: "1px solid rgba(0,200,255,0.08)",
-        borderLeft: "1px solid rgba(0,200,255,0.08)",
-        borderTopLeftRadius: 12,
-        backdropFilter: "blur(6px)",
-        WebkitBackdropFilter: "blur(6px)",
-        display: "flex",
-        flexDirection: "column",
-        gap: 0,
-        // Hologram + ghost layers are decorative — keep pointer-events off on wrapper
-        // WeaponConsole handles its own pointer-events internally
-      }}
-    >
-      {/* Hologram + ghost — decorative, no pointer events */}
-      <div style={{ pointerEvents: "none", flexShrink: 0 }}>
-        <HudErrorBoundary name="Hologram">
-          <WeaponHologramLayer />
-        </HudErrorBoundary>
-      </div>
-      <div style={{ pointerEvents: "none", flexShrink: 0 }}>
-        <WeaponGhostLayer />
-      </div>
-      {/* WeaponConsole — fully interactive */}
-      <div style={{ flexShrink: 0 }}>
-        <WeaponConsole />
-      </div>
-    </div>
-  );
-}
-
 /** Inner component — only renders when landscape is confirmed */
 function TacticalStageInner() {
   const [diagOpen, setDiagOpen] = useState(false);
@@ -665,7 +609,7 @@ function TacticalStageInner() {
        */}
 
       {/* Weapon + fire console — bottom-right overlay */}
-      <OverlayControlPanel />
+      <PillControlOverlay />
 
       {/* Narrative event panel — center overlay */}
       <NarrativeEventPanel />
